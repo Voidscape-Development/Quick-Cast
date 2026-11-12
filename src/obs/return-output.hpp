@@ -54,6 +54,8 @@ private:
 
 	bool enabled() const;
 	const std::string &sourceName() const;
+	uint32_t targetHeight() const;
+	uint32_t videoBitrateKbps() const;
 
 	GuestService *service_;
 	ReturnFeedId feed_;

@@ -60,6 +60,9 @@ struct Settings {
 	std::string secondVideoSource;
 	uint32_t returnHeight = 720;
 	uint32_t returnVideoBitrateKbps = 1500;
+	/** The second feed has its own quality: a screen usually wants more pixels and bits than a face. */
+	uint32_t secondHeight = 720;
+	uint32_t secondVideoBitrateKbps = 2500;
 	uint32_t returnAudioBitrateKbps = 96;
 
 	// Optional TURN relay for restrictive networks

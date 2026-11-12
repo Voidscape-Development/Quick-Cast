@@ -106,6 +106,12 @@ Settings loadSettings()
 		settings.returnVideoSource = getString(data, "return_video_source");
 		settings.secondFeedEnabled = obs_data_get_bool(data, "second_feed_enabled");
 		settings.secondVideoSource = getString(data, "second_video_source");
+		obs_data_set_default_int(data, "second_height", settings.secondHeight);
+		obs_data_set_default_int(data, "second_video_bitrate_kbps", settings.secondVideoBitrateKbps);
+		settings.secondHeight = static_cast<uint32_t>(
+			std::clamp<long long>(obs_data_get_int(data, "second_height"), 180, 1080));
+		settings.secondVideoBitrateKbps = static_cast<uint32_t>(
+			std::clamp<long long>(obs_data_get_int(data, "second_video_bitrate_kbps"), 200, 8000));
 		settings.returnHeight = static_cast<uint32_t>(
 			std::clamp<long long>(obs_data_get_int(data, "return_height"), 180, 1080));
 		settings.returnVideoBitrateKbps = static_cast<uint32_t>(
@@ -159,6 +165,8 @@ void saveSettings(const Settings &settings)
 	obs_data_set_string(data, "return_video_source", settings.returnVideoSource.c_str());
 	obs_data_set_bool(data, "second_feed_enabled", settings.secondFeedEnabled);
 	obs_data_set_string(data, "second_video_source", settings.secondVideoSource.c_str());
+	obs_data_set_int(data, "second_height", settings.secondHeight);
+	obs_data_set_int(data, "second_video_bitrate_kbps", settings.secondVideoBitrateKbps);
 	obs_data_set_int(data, "return_height", settings.returnHeight);
 	obs_data_set_int(data, "return_video_bitrate_kbps", settings.returnVideoBitrateKbps);
 	obs_data_set_int(data, "return_audio_bitrate_kbps", settings.returnAudioBitrateKbps);

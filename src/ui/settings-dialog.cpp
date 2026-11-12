@@ -184,25 +184,49 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	for (int track = 1; track <= 6; ++track)
 		returnTrack_->addItem(tr_("Settings.Return.TrackN").arg(track), track);
 	selectData(returnTrack_, settings.returnAudioTrack);
-	returnResolution_ = new QComboBox(returnGroup);
-	returnResolution_->addItem(QStringLiteral("360p"), 360);
-	returnResolution_->addItem(QStringLiteral("540p"), 540);
-	returnResolution_->addItem(QStringLiteral("720p"), 720);
-	returnResolution_->addItem(QStringLiteral("1080p"), 1080);
-	selectData(returnResolution_, static_cast<int>(settings.returnHeight));
-	returnBitrate_ = new QSpinBox(returnGroup);
-	returnBitrate_->setRange(200, 8000);
-	returnBitrate_->setSingleStep(100);
-	returnBitrate_->setSuffix(QStringLiteral(" kbps"));
-	returnBitrate_->setValue(static_cast<int>(settings.returnVideoBitrateKbps));
+	const auto makeResolution = [returnGroup](uint32_t height) {
+		auto *combo = new QComboBox(returnGroup);
+		combo->addItem(QStringLiteral("360p"), 360);
+		combo->addItem(QStringLiteral("540p"), 540);
+		combo->addItem(QStringLiteral("720p"), 720);
+		combo->addItem(QStringLiteral("1080p"), 1080);
+		selectData(combo, static_cast<int>(height));
+		combo->setAccessibleName(tr_("Settings.Return.Resolution"));
+		combo->setToolTip(tr_("Settings.Return.Resolution"));
+		return combo;
+	};
+	const auto makeBitrate = [returnGroup](uint32_t kbps) {
+		auto *spin = new QSpinBox(returnGroup);
+		spin->setRange(200, 8000);
+		spin->setSingleStep(100);
+		spin->setSuffix(QStringLiteral(" kbps"));
+		spin->setValue(static_cast<int>(kbps));
+		spin->setAccessibleName(tr_("Settings.Return.Bitrate"));
+		spin->setToolTip(tr_("Settings.Return.Bitrate"));
+		return spin;
+	};
+	// Each feed gets its own "resolution at bitrate" row directly under its source.
+	const auto qualityRow = [returnGroup](QComboBox *resolution, QSpinBox *bitrate) {
+		auto *row = new QWidget(returnGroup);
+		auto *layout = new QHBoxLayout(row);
+		layout->setContentsMargins(0, 0, 0, 0);
+		layout->addWidget(resolution, 1);
+		layout->addWidget(bitrate, 1);
+		return row;
+	};
+	returnResolution_ = makeResolution(settings.returnHeight);
+	returnBitrate_ = makeBitrate(settings.returnVideoBitrateKbps);
+	secondResolution_ = makeResolution(settings.secondHeight);
+	secondBitrate_ = makeBitrate(settings.secondVideoBitrateKbps);
+
 	returnForm->addRow(QString(), returnEnabled_);
 	returnForm->addRow(tr_("Settings.Return.Video"), returnVideo_);
+	returnForm->addRow(tr_("Settings.Return.Quality"), qualityRow(returnResolution_, returnBitrate_));
 	returnForm->addRow(tr_("Settings.Return.Second"), secondVideo_);
+	returnForm->addRow(tr_("Settings.Return.Quality"), qualityRow(secondResolution_, secondBitrate_));
 	returnForm->addRow(hint(tr_("Settings.Return.VideoHint"), returnGroup));
 	returnForm->addRow(tr_("Settings.Return.Track"), returnTrack_);
 	returnForm->addRow(hint(tr_("Settings.Return.TrackHint"), returnGroup));
-	returnForm->addRow(tr_("Settings.Return.Resolution"), returnResolution_);
-	returnForm->addRow(tr_("Settings.Return.Bitrate"), returnBitrate_);
 
 	const auto syncReturnControls = [this] {
 		const bool enabled = returnEnabled_->isChecked();
@@ -211,8 +235,12 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 		returnTrack_->setEnabled(enabled);
 		returnResolution_->setEnabled(enabled);
 		returnBitrate_->setEnabled(enabled);
+		const bool second = enabled && secondVideo_->currentIndex() > 0;
+		secondResolution_->setEnabled(second);
+		secondBitrate_->setEnabled(second);
 	};
 	connect(returnEnabled_, &QCheckBox::toggled, this, syncReturnControls);
+	connect(secondVideo_, &QComboBox::currentIndexChanged, this, syncReturnControls);
 	syncReturnControls();
 
 	// --- Network ---
@@ -288,6 +316,8 @@ void SettingsDialog::save()
 	settings.returnAudioTrack = returnTrack_->currentData().toInt();
 	settings.returnHeight = static_cast<uint32_t>(returnResolution_->currentData().toInt());
 	settings.returnVideoBitrateKbps = static_cast<uint32_t>(returnBitrate_->value());
+	settings.secondHeight = static_cast<uint32_t>(secondResolution_->currentData().toInt());
+	settings.secondVideoBitrateKbps = static_cast<uint32_t>(secondBitrate_->value());
 
 	settings.turnUrl = turnUrl_->text().trimmed().toStdString();
 	settings.turnUsername = turnUsername_->text().trimmed().toStdString();

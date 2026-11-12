@@ -163,6 +163,16 @@ bool ReturnFeed::enabled() const
 	return feed_ == ReturnFeedId::Main || settings_.secondFeedEnabled;
 }
 
+uint32_t ReturnFeed::targetHeight() const
+{
+	return feed_ == ReturnFeedId::Main ? settings_.returnHeight : settings_.secondHeight;
+}
+
+uint32_t ReturnFeed::videoBitrateKbps() const
+{
+	return feed_ == ReturnFeedId::Main ? settings_.returnVideoBitrateKbps : settings_.secondVideoBitrateKbps;
+}
+
 const std::string &ReturnFeed::sourceName() const
 {
 	return feed_ == ReturnFeedId::Main ? settings_.returnVideoSource : settings_.secondVideoSource;
@@ -239,10 +249,9 @@ bool ReturnFeed::prepareSourceView(const obs_video_info &mainVideo, video_t *&vi
 	viewVideo.base_height = sourceHeight;
 	viewVideo.output_width = evenSize(sourceWidth);
 	viewVideo.output_height = evenSize(sourceHeight);
-	if (settings_.returnHeight > 0 && settings_.returnHeight < sourceHeight) {
-		viewVideo.output_width =
-			evenSize(static_cast<double>(sourceWidth) * settings_.returnHeight / sourceHeight);
-		viewVideo.output_height = evenSize(settings_.returnHeight);
+	if (targetHeight() > 0 && targetHeight() < sourceHeight) {
+		viewVideo.output_width = evenSize(static_cast<double>(sourceWidth) * targetHeight() / sourceHeight);
+		viewVideo.output_height = evenSize(targetHeight());
 	}
 
 	view_ = obs_view_create();
@@ -275,15 +284,15 @@ bool ReturnFeed::createObjects()
 	uint32_t width = nativeWidth;
 	uint32_t height = nativeHeight;
 	const bool customSource = prepareSourceView(video, videoOutput, width, height);
-	if (!customSource && settings_.returnHeight > 0 && settings_.returnHeight < height) {
-		width = evenSize(static_cast<double>(width) * settings_.returnHeight / height);
-		height = evenSize(settings_.returnHeight);
+	if (!customSource && targetHeight() > 0 && targetHeight() < height) {
+		width = evenSize(static_cast<double>(width) * targetHeight() / height);
+		height = evenSize(targetHeight());
 	}
 	const uint32_t fps = video.fps_den > 0 ? (video.fps_num + video.fps_den / 2) / video.fps_den : 30;
 
 	OBSDataAutoRelease videoSettings = obs_data_create();
 	obs_data_set_string(videoSettings, "rate_control", "CBR");
-	obs_data_set_int(videoSettings, "bitrate", settings_.returnVideoBitrateKbps);
+	obs_data_set_int(videoSettings, "bitrate", videoBitrateKbps());
 	// libobs cannot force a keyframe on demand, so a short interval is what bounds how long a newly joined
 	// guest (or one recovering from packet loss) waits for a picture.
 	obs_data_set_int(videoSettings, "keyint_sec", 1);
@@ -339,7 +348,7 @@ bool ReturnFeed::createObjects()
 	format.width = width;
 	format.height = height;
 	format.framesPerSecond = fps;
-	format.videoBitrateKbps = settings_.returnVideoBitrateKbps;
+	format.videoBitrateKbps = videoBitrateKbps();
 	format.audioBitrateKbps = settings_.returnAudioBitrateKbps;
 	service_->setReturnFeedFormat(feed_, format);
 	return true;

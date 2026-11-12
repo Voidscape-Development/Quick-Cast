@@ -38,7 +38,8 @@ follow the show. Two things to know:
   any source or scene, for example your camera.
 - You can also turn on a **second feed** (the program or any other source). Guests see it as a separate tile next
   to the main one. A typical co-streaming setup is main feed = your camera, second feed = the program or a screen
-  capture. The second feed is video only; your audio travels with the main feed.
+  capture. The second feed is video only; your audio travels with the main feed. Each feed has its own resolution
+  and bitrate.
 - Guests hear **audio track 6** by default (configurable). Quick Cast automatically removes guest sources from that
   track, so nobody hears a delayed echo of themselves. Guests hear each other directly, peer to peer.
 - The return feed has its own lightweight encoder (x264 720p, 1.5 Mbps by default), separate from your stream and

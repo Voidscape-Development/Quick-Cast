@@ -155,6 +155,8 @@ void SessionController::applySettings(const Settings &settings)
 				   settings.returnVideoSource != settings_.returnVideoSource ||
 				   settings.secondFeedEnabled != settings_.secondFeedEnabled ||
 				   settings.secondVideoSource != settings_.secondVideoSource ||
+				   settings.secondHeight != settings_.secondHeight ||
+				   settings.secondVideoBitrateKbps != settings_.secondVideoBitrateKbps ||
 				   settings.returnVideoBitrateKbps != settings_.returnVideoBitrateKbps ||
 				   settings.returnAudioBitrateKbps != settings_.returnAudioBitrateKbps ||
 				   settings.returnFeedEnabled != settings_.returnFeedEnabled;

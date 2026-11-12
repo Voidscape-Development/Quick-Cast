@@ -56,6 +56,8 @@ private:
 	QComboBox *returnTrack_;
 	QComboBox *returnResolution_;
 	QSpinBox *returnBitrate_;
+	QComboBox *secondResolution_;
+	QSpinBox *secondBitrate_;
 
 	QLineEdit *turnUrl_;
 	QLineEdit *turnUsername_;
