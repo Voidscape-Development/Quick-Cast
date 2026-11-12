@@ -15,11 +15,6 @@ endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# The project enables Clang modules for Xcode builds. usrsctp declares its own versions of BSD kernel structures
-# (e.g. struct inpcb) that clash with the system modules, so third-party code is compiled without them.
-set(CMAKE_XCODE_ATTRIBUTE_CLANG_ENABLE_MODULES NO)
-set(CMAKE_XCODE_ATTRIBUTE_CLANG_MODULES_AUTOLINK NO)
-
 # --- nlohmann_json -------------------------------------------------------------------------------------------------
 find_package(nlohmann_json 3.10 QUIET)
 if(NOT nlohmann_json_FOUND)
@@ -64,3 +59,19 @@ FetchContent_Declare(
   EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(libdatachannel)
+
+# The project enables Clang modules for every Xcode target (a project-wide build setting). usrsctp declares its own
+# versions of BSD kernel structures (e.g. struct inpcb) that clash with the system modules, so third-party targets
+# are compiled without them.
+foreach(
+  _target
+  IN
+  ITEMS datachannel datachannel-static usrsctp srtp2 juice juice-static
+)
+  if(TARGET ${_target})
+    set_target_properties(
+      ${_target}
+      PROPERTIES XCODE_ATTRIBUTE_CLANG_ENABLE_MODULES NO XCODE_ATTRIBUTE_CLANG_MODULES_AUTOLINK NO
+    )
+  endif()
+endforeach()
