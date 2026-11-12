@@ -64,9 +64,8 @@ SessionController::~SessionController()
 
 void SessionController::shutdown()
 {
-	if (shutDown_)
+	if (shutDown_.exchange(true))
 		return;
-	shutDown_ = true;
 
 	if (returnFeed_)
 		returnFeed_->release();

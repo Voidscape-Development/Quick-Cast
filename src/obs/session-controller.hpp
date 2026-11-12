@@ -26,6 +26,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QObject>
 #include <QString>
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -120,7 +121,8 @@ private:
 	QString stateDetail_;
 	std::map<std::string, GuestStatus> statuses_;
 	bool returnDemand_ = false;
-	bool shutDown_ = false;
+	/** Read by guest sources on other threads. */
+	std::atomic<bool> shutDown_{false};
 
 	/** Guards state that guest sources touch from other threads. */
 	mutable std::mutex sharedMutex_;

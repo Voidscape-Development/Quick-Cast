@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "executor.hpp"
 
 #include <future>
+#include <memory>
 
 namespace qc {
 
@@ -80,11 +81,13 @@ void Executor::runSync(const Task &task)
 		task();
 		return;
 	}
-	std::promise<void> done;
-	auto finished = done.get_future();
-	const TimerId id = postDelayed(std::chrono::milliseconds(0), [&] {
+	// The promise lives only inside the task: if the executor shuts down and drops the task unrun, the promise is
+	// destroyed with it and the wait below ends instead of hanging forever.
+	auto done = std::make_shared<std::promise<void>>();
+	auto finished = done->get_future();
+	const TimerId id = postDelayed(std::chrono::milliseconds(0), [&task, done = std::move(done)] {
 		task();
-		done.set_value();
+		done->set_value();
 	});
 	if (id == 0)
 		return; // shutting down
