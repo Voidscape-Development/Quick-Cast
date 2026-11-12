@@ -46,8 +46,10 @@ SessionController::SessionController()
 	settings_ = loadSettings();
 	service_ = std::make_unique<vdo::VdoService>();
 	service_->setListener(this);
-	returnFeed_ = std::make_unique<ReturnFeed>(service_.get());
+	returnFeed_ = std::make_unique<ReturnFeed>(service_.get(), ReturnFeedId::Main);
 	returnFeed_->configure(settings_);
+	secondFeed_ = std::make_unique<ReturnFeed>(service_.get(), ReturnFeedId::Second);
+	secondFeed_->configure(settings_);
 
 	publishSeats();
 	for (const GuestSeat &seat : settings_.seats)
@@ -69,6 +71,8 @@ void SessionController::shutdown()
 
 	if (returnFeed_)
 		returnFeed_->release();
+	if (secondFeed_)
+		secondFeed_->release();
 	if (service_) {
 		service_->stop();
 		service_->setListener(nullptr);
@@ -123,6 +127,7 @@ void SessionController::stopShow()
 	if (shutDown_)
 		return;
 	returnFeed_->stop();
+	secondFeed_->stop();
 	returnDemand_ = false;
 	service_->stop();
 	// stop() is synchronous, but its final notifications are still queued; settle the UI state now.
@@ -141,12 +146,15 @@ void SessionController::applySettings(const Settings &settings)
 	const bool connectionChanged =
 		settings.room != settings_.room || settings.password != settings_.password ||
 		settings.hostName != settings_.hostName || settings.returnFeedEnabled != settings_.returnFeedEnabled ||
+		settings.secondFeedEnabled != settings_.secondFeedEnabled ||
 		settings.guestBitrateKbps != settings_.guestBitrateKbps ||
 		settings.preferredCodec != settings_.preferredCodec || settings.turnUrl != settings_.turnUrl ||
 		settings.turnUsername != settings_.turnUsername || settings.turnPassword != settings_.turnPassword;
 	const bool returnChanged = settings.returnAudioTrack != settings_.returnAudioTrack ||
 				   settings.returnHeight != settings_.returnHeight ||
 				   settings.returnVideoSource != settings_.returnVideoSource ||
+				   settings.secondFeedEnabled != settings_.secondFeedEnabled ||
+				   settings.secondVideoSource != settings_.secondVideoSource ||
 				   settings.returnVideoBitrateKbps != settings_.returnVideoBitrateKbps ||
 				   settings.returnAudioBitrateKbps != settings_.returnAudioBitrateKbps ||
 				   settings.returnFeedEnabled != settings_.returnFeedEnabled;
@@ -176,8 +184,10 @@ void SessionController::applySettings(const Settings &settings)
 		}
 	}
 
-	if (returnChanged)
+	if (returnChanged) {
 		returnFeed_->configure(settings_);
+		secondFeed_->configure(settings_);
+	}
 
 	if (connectionChanged && showRunning()) {
 		stopShow();
@@ -460,10 +470,13 @@ void SessionController::onReturnFeedDemand(bool wanted)
 			if (shutDown_)
 				return;
 			returnDemand_ = wanted;
-			if (wanted)
+			if (wanted) {
 				returnFeed_->start();
-			else
+				secondFeed_->start();
+			} else {
 				returnFeed_->stop();
+				secondFeed_->stop();
+			}
 		},
 		Qt::QueuedConnection);
 }

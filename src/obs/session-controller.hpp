@@ -116,6 +116,7 @@ private:
 	Settings settings_;
 	std::unique_ptr<GuestService> service_;
 	std::unique_ptr<ReturnFeed> returnFeed_;
+	std::unique_ptr<ReturnFeed> secondFeed_;
 
 	ServiceState state_ = ServiceState::Stopped;
 	QString stateDetail_;

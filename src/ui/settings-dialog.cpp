@@ -157,6 +157,29 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 		}
 		returnVideo_->setCurrentIndex(index);
 	}
+	// Second feed: off, the program, or any source. "Off" is a null variant; the program is an empty name.
+	secondVideo_ = new QComboBox(returnGroup);
+	secondVideo_->addItem(tr_("Settings.Return.Second.Off"), QVariant());
+	secondVideo_->addItem(tr_("Settings.Return.Video.Program"), QString());
+	for (const QString &name : videoSourceNames())
+		secondVideo_->addItem(name, name);
+	if (!settings.secondFeedEnabled) {
+		secondVideo_->setCurrentIndex(0);
+	} else {
+		const QString current = QString::fromStdString(settings.secondVideoSource);
+		int index = -1;
+		for (int i = 1; i < secondVideo_->count(); ++i) {
+			if (secondVideo_->itemData(i).toString() == current) {
+				index = i;
+				break;
+			}
+		}
+		if (index < 0) {
+			secondVideo_->addItem(current, current);
+			index = secondVideo_->count() - 1;
+		}
+		secondVideo_->setCurrentIndex(index);
+	}
 	returnTrack_ = new QComboBox(returnGroup);
 	for (int track = 1; track <= 6; ++track)
 		returnTrack_->addItem(tr_("Settings.Return.TrackN").arg(track), track);
@@ -174,6 +197,7 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	returnBitrate_->setValue(static_cast<int>(settings.returnVideoBitrateKbps));
 	returnForm->addRow(QString(), returnEnabled_);
 	returnForm->addRow(tr_("Settings.Return.Video"), returnVideo_);
+	returnForm->addRow(tr_("Settings.Return.Second"), secondVideo_);
 	returnForm->addRow(hint(tr_("Settings.Return.VideoHint"), returnGroup));
 	returnForm->addRow(tr_("Settings.Return.Track"), returnTrack_);
 	returnForm->addRow(hint(tr_("Settings.Return.TrackHint"), returnGroup));
@@ -183,6 +207,7 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	const auto syncReturnControls = [this] {
 		const bool enabled = returnEnabled_->isChecked();
 		returnVideo_->setEnabled(enabled);
+		secondVideo_->setEnabled(enabled);
 		returnTrack_->setEnabled(enabled);
 		returnResolution_->setEnabled(enabled);
 		returnBitrate_->setEnabled(enabled);
@@ -258,6 +283,8 @@ void SettingsDialog::save()
 
 	settings.returnFeedEnabled = returnEnabled_->isChecked();
 	settings.returnVideoSource = returnVideo_->currentData().toString().toStdString();
+	settings.secondFeedEnabled = secondVideo_->currentIndex() > 0;
+	settings.secondVideoSource = secondVideo_->currentData().toString().toStdString();
 	settings.returnAudioTrack = returnTrack_->currentData().toInt();
 	settings.returnHeight = static_cast<uint32_t>(returnResolution_->currentData().toInt());
 	settings.returnVideoBitrateKbps = static_cast<uint32_t>(returnBitrate_->value());

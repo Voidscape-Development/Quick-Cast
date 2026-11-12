@@ -106,6 +106,10 @@ struct InboundPeer {
 
 /** Connection on which we publish the return feed to a guest. */
 struct OutboundPeer {
+	/** Which of the host's feeds this connection carries (0 = main, 1 = second). */
+	int feed = 0;
+	/** Key in the outbound map; a guest can hold one connection per feed. */
+	std::string key;
 	std::string uuid;
 	std::string session;
 	std::shared_ptr<rtc::PeerConnection> pc;
@@ -243,10 +247,16 @@ public:
 	Credentials defaultCredentials_;
 	std::string wireRoom_;
 	std::string hostWireStreamId_;
+	std::string secondWireStreamId_;
 	bool director_ = false;
 	bool openedBefore_ = false;
 	ServiceState state_ = ServiceState::Stopped;
 	std::shared_ptr<SignalingClient> signaling_;
+	/** Second room membership that publishes the second feed; null when that feed is off. */
+	std::shared_ptr<SignalingClient> secondSignaling_;
+	bool secondOpenedBefore_ = false;
+	/** Feed whose signaling connection the message being handled arrived on. */
+	int feed_ = 0;
 	std::map<std::string, std::shared_ptr<Seat>> seats_;
 	std::map<std::string, std::shared_ptr<InboundPeer>> inbound_;
 	std::map<std::string, std::shared_ptr<OutboundPeer>> outbound_;
@@ -261,7 +271,7 @@ public:
 
 	std::mutex returnMutex_;
 	std::vector<std::shared_ptr<OutboundPeer>> returnTargets_;
-	ReturnFeedFormat returnFormat_;
+	ReturnFeedFormat returnFormat_[2];
 
 	// ---------------------------------------------------------------------------------------------------------
 	// Helpers
@@ -326,12 +336,29 @@ public:
 	std::vector<const Credentials *> decryptionKeys() const { return {&credentials_, &defaultCredentials_}; }
 
 	/** Signaling for an established peer prefers its data channel (as the web client does), else the WebSocket. */
-	void sendPeerSignal(const std::shared_ptr<rtc::DataChannel> &channel, const Json &message)
+	void sendPeerSignal(const std::shared_ptr<rtc::DataChannel> &channel, const Json &message, int feed = 0)
 	{
 		if (sendJson(channel, message))
 			return;
-		if (signaling_)
-			signaling_->send(message);
+		if (auto *signaling = signalingFor(feed))
+			signaling->send(message);
+	}
+
+	SignalingClient *signalingFor(int feed) const { return feed == 0 ? signaling_.get() : secondSignaling_.get(); }
+
+	const std::string &wireStreamIdFor(int feed) const
+	{
+		return feed == 0 ? hostWireStreamId_ : secondWireStreamId_;
+	}
+
+	static std::string outboundKey(int feed, const std::string &uuid)
+	{
+		return feed == 0 ? uuid : "#" + std::to_string(feed) + ":" + uuid;
+	}
+
+	bool isOwnStream(const std::string &wireStreamId) const
+	{
+		return wireStreamId == hostWireStreamId_ || wireStreamId == secondWireStreamId_;
 	}
 
 	// ---------------------------------------------------------------------------------------------------------
@@ -349,8 +376,10 @@ public:
 		wireRoom_ = credentials_.wireRoomId(config.room);
 		// A fresh stream ID per run avoids "already in use" when the show is restarted quickly.
 		hostWireStreamId_ = credentials_.wireStreamId("host_" + generateStreamId(8));
+		secondWireStreamId_ = credentials_.wireStreamId("host2_" + generateStreamId(8));
 		director_ = false;
 		openedBefore_ = false;
+		secondOpenedBefore_ = false;
 
 		if (sanitizeId(config.room, kMaxRoomIdLength).empty()) {
 			setState(ServiceState::Failed, "The show has no name.");
@@ -384,6 +413,20 @@ public:
 		signaling_ = SignalingClient::create(executor_, options_.signalingUrl, std::move(callbacks));
 		signaling_->connect();
 
+		if (config_.returnFeedEnabled && config_.secondFeedEnabled) {
+			SignalingClient::Callbacks second;
+			second.onOpen = [weak] {
+				if (auto self = weak.lock())
+					self->onSecondSignalingOpen();
+			};
+			second.onMessage = [weak](const Json &message) {
+				if (auto self = weak.lock())
+					self->onSignalingMessage(message, {}, 1);
+			};
+			secondSignaling_ = SignalingClient::create(executor_, options_.signalingUrl, std::move(second));
+			secondSignaling_->connect();
+		}
+
 		scheduleStats();
 	}
 
@@ -401,6 +444,10 @@ public:
 		if (signaling_) {
 			signaling_->close();
 			signaling_.reset();
+		}
+		if (secondSignaling_) {
+			secondSignaling_->close();
+			secondSignaling_.reset();
 		}
 		roomStreams_.clear();
 
@@ -459,10 +506,30 @@ public:
 			signaling_->send(buildSeed(hostWireStreamId_));
 	}
 
-	void onSignalingMessage(const Json &message, const std::string &fallbackUuid)
+	void onSecondSignalingOpen()
+	{
+		if (!running_ || !secondSignaling_)
+			return;
+		// As with the main connection, a reconnect gives us a new identity; drop what hung off the old one.
+		if (secondOpenedBefore_) {
+			std::vector<std::string> stale;
+			for (const auto &[key, peer] : outbound_) {
+				if (peer->feed == 1)
+					stale.push_back(key);
+			}
+			for (const std::string &key : stale)
+				closeOutbound(key);
+		}
+		secondOpenedBefore_ = true;
+		secondSignaling_->send(buildJoinRoom(wireRoom_, false));
+		secondSignaling_->send(buildSeed(secondWireStreamId_));
+	}
+
+	void onSignalingMessage(const Json &message, const std::string &fallbackUuid, int feed = 0)
 	{
 		if (!running_)
 			return;
+		feed_ = feed;
 
 		// Server keepalive.
 		if (auto request = message.find("request");
@@ -470,8 +537,8 @@ public:
 			Json pong = {{"request", "pong"}};
 			if (auto id = message.find("id"); id != message.end())
 				pong["id"] = *id;
-			if (signaling_)
-				signaling_->send(pong);
+			if (auto *signaling = signalingFor(feed))
+				signaling->send(pong);
 			return;
 		}
 
@@ -483,6 +550,8 @@ public:
 
 	void handle(const ListingMessage &listing)
 	{
+		if (feed_ != 0)
+			return; // the second membership only publishes; the main one tracks the room
 		director_ = listing.director.value_or(true);
 		if (!director_)
 			QC_LOG_WARN("room is already claimed by another director; removing guests will not work");
@@ -494,10 +563,16 @@ public:
 			onStreamAvailable(member);
 	}
 
-	void handle(const StreamAddedMessage &added) { onStreamAvailable(added.member); }
+	void handle(const StreamAddedMessage &added)
+	{
+		if (feed_ == 0)
+			onStreamAvailable(added.member);
+	}
 
 	void handle(const StreamRemovedMessage &removed)
 	{
+		if (feed_ != 0)
+			return;
 		std::string uuid = removed.member.uuid;
 		if (!removed.member.streamId.empty()) {
 			if (auto it = roomStreams_.find(removed.member.streamId); it != roomStreams_.end()) {
@@ -512,6 +587,10 @@ public:
 
 	void handle(const PeerGoneMessage &gone)
 	{
+		if (feed_ != 0) {
+			closeOutbound(outboundKey(feed_, gone.uuid));
+			return;
+		}
 		for (auto it = roomStreams_.begin(); it != roomStreams_.end();) {
 			if (it->second == gone.uuid)
 				it = roomStreams_.erase(it);
@@ -519,12 +598,19 @@ public:
 				++it;
 		}
 		closeInbound(gone.uuid, "peer left");
-		closeOutbound(gone.uuid);
+		closeOutbound(outboundKey(0, gone.uuid));
 	}
 
 	void handle(const AlertMessage &alert)
 	{
 		QC_LOG_WARN("server alert: %s", alert.text.c_str());
+		if (feed_ != 0) {
+			if (containsInsensitive(alert.text, "already in use") && secondSignaling_) {
+				secondWireStreamId_ = credentials_.wireStreamId("host2_" + generateStreamId(8));
+				secondSignaling_->send(buildSeed(secondWireStreamId_));
+			}
+			return;
+		}
 		if (containsInsensitive(alert.text, "already claimed")) {
 			director_ = false;
 			return; // we can still host, just without director powers
@@ -550,7 +636,9 @@ public:
 		if (!config_.returnFeedEnabled)
 			return;
 
-		if (auto it = outbound_.find(request.uuid); it != outbound_.end()) {
+		const int feed = feed_;
+		const std::string key = outboundKey(feed, request.uuid);
+		if (auto it = outbound_.find(key); it != outbound_.end()) {
 			const auto &existing = it->second;
 			const bool negotiating = !existing->connected &&
 						 std::chrono::steady_clock::now() - existing->created <
@@ -558,30 +646,35 @@ public:
 						 !sessionsConflict(existing->session, request.session);
 			if (negotiating) {
 				// Duplicate request while our first offer is still in flight: repeat it verbatim.
-				if (existing->cachedOffer && signaling_)
-					signaling_->send(*existing->cachedOffer);
+				if (existing->cachedOffer) {
+					if (auto *signaling = signalingFor(feed))
+						signaling->send(*existing->cachedOffer);
+				}
 				return;
 			}
-			closeOutbound(request.uuid);
+			closeOutbound(key);
 		}
-		createOutbound(request.uuid, request.session.empty() ? generateSessionId() : request.session);
+		createOutbound(feed, request.uuid, request.session.empty() ? generateSessionId() : request.session);
 	}
 
-	void handle(const IceRestartRequestMessage &request) { restartOutbound(request.uuid); }
+	void handle(const IceRestartRequestMessage &request) { restartOutbound(outboundKey(feed_, request.uuid)); }
 
 	void handle(const DescriptionMessage &description)
 	{
-		if (description.isOffer)
-			onRemoteOffer(description);
-		else
+		if (description.isOffer) {
+			if (feed_ == 0)
+				onRemoteOffer(description);
+		} else
 			onRemoteAnswer(description);
 	}
 
 	void handle(const CandidatesMessage &message)
 	{
 		auto inboundIt = inbound_.find(message.uuid);
-		auto outboundIt = outbound_.find(message.uuid);
-		std::shared_ptr<InboundPeer> inboundPeer = inboundIt != inbound_.end() ? inboundIt->second : nullptr;
+		auto outboundIt = outbound_.find(outboundKey(feed_, message.uuid));
+		// Guests only ever publish to the main membership.
+		std::shared_ptr<InboundPeer> inboundPeer = feed_ == 0 && inboundIt != inbound_.end() ? inboundIt->second
+												     : nullptr;
 		std::shared_ptr<OutboundPeer> outboundPeer = outboundIt != outbound_.end() ? outboundIt->second
 											   : nullptr;
 
@@ -673,7 +766,7 @@ public:
 
 	void onStreamAvailable(const RoomMember &member)
 	{
-		if (member.streamId.empty() || member.streamId == hostWireStreamId_)
+		if (member.streamId.empty() || isOwnStream(member.streamId))
 			return;
 
 		roomStreams_[member.streamId] = member.uuid;
@@ -741,7 +834,7 @@ public:
 					}
 				}
 			}
-			if (wireStreamId.empty() || wireStreamId == hostWireStreamId_) {
+			if (wireStreamId.empty() || isOwnStream(wireStreamId)) {
 				QC_LOG_DEBUG("ignoring offer from unknown publisher %s", offer.uuid.c_str());
 				return;
 			}
@@ -831,7 +924,7 @@ public:
 
 	bool isCurrent(const std::shared_ptr<OutboundPeer> &peer) const
 	{
-		auto it = outbound_.find(peer->uuid);
+		auto it = outbound_.find(peer->key);
 		return it != outbound_.end() && it->second == peer;
 	}
 
@@ -1135,9 +1228,11 @@ public:
 	// Outbound: the return feed
 	// ---------------------------------------------------------------------------------------------------------
 
-	void createOutbound(const std::string &uuid, const std::string &session)
+	void createOutbound(int feed, const std::string &uuid, const std::string &session)
 	{
 		auto peer = std::make_shared<OutboundPeer>();
+		peer->feed = feed;
+		peer->key = outboundKey(feed, uuid);
 		peer->uuid = uuid;
 		peer->session = session;
 
@@ -1150,12 +1245,13 @@ public:
 				if (!strong || !self.isCurrent(strong))
 					return;
 				auto message = buildDescription(self.credentials_, strong->uuid, strong->session, true,
-								std::string(description), self.hostWireStreamId_);
+								std::string(description),
+								self.wireStreamIdFor(strong->feed));
 				if (!message)
 					return;
 				strong->cachedOffer = *message;
-				if (self.signaling_)
-					self.signaling_->send(*message);
+				if (auto *signaling = self.signalingFor(strong->feed))
+					signaling->send(*message);
 			}));
 
 			peer->pc->onLocalCandidate(bounce([weakPeer](Impl &self, rtc::Candidate candidate) {
@@ -1165,7 +1261,7 @@ public:
 				auto message = buildCandidates(self.credentials_, strong->uuid, strong->session, true,
 							       {IceCandidate{candidate.candidate(), candidate.mid()}});
 				if (message)
-					self.sendPeerSignal(strong->channel, *message);
+					self.sendPeerSignal(strong->channel, *message, strong->feed);
 			}));
 
 			peer->pc->onStateChange(bounce([weakPeer](Impl &self, rtc::PeerConnection::State state) {
@@ -1191,12 +1287,14 @@ public:
 				peer->videoTrack->setMediaHandler(packetizer);
 			}
 
-			const uint32_t audioSsrc = randomSsrc();
-			rtc::Description::Audio audio("audio", rtc::Description::Direction::SendOnly);
-			audio.addOpusCodec(kReturnAudioPayloadType);
-			audio.addSSRC(audioSsrc, "quick-cast", "quick-cast-return", "audio");
-			peer->audioTrack = peer->pc->addTrack(audio);
-			{
+			// Only the main feed carries the host's audio; a second copy would just double it for guests.
+			if (feed == 0) {
+				const uint32_t audioSsrc = randomSsrc();
+				rtc::Description::Audio audio("audio", rtc::Description::Direction::SendOnly);
+				audio.addOpusCodec(kReturnAudioPayloadType);
+				audio.addSSRC(audioSsrc, "quick-cast", "quick-cast-return", "audio");
+				peer->audioTrack = peer->pc->addTrack(audio);
+
 				auto rtpConfig = std::make_shared<rtc::RtpPacketizationConfig>(
 					audioSsrc, "quick-cast", kReturnAudioPayloadType,
 					rtc::OpusRtpPacketizer::DefaultClockRate);
@@ -1215,10 +1313,13 @@ public:
 				ReturnFeedFormat format;
 				{
 					std::lock_guard<std::mutex> lock(self.returnMutex_);
-					format = self.returnFormat_;
+					format = self.returnFormat_[strong->feed];
 				}
-				sendJson(strong->channel, buildPublisherInfo(self.config_.hostName, format.width,
-									     format.height, format.framesPerSecond));
+				// Guests see each feed as its own tile; the suffix tells the two apart.
+				const std::string label = strong->feed == 0 ? self.config_.hostName
+									    : self.config_.hostName + " (2)";
+				sendJson(strong->channel, buildPublisherInfo(label, format.width, format.height,
+									     format.framesPerSecond));
 			}));
 			peer->channel->onMessage(bounce([weakPeer](Impl &self, rtc::message_variant data) {
 				auto strong = weakPeer.lock();
@@ -1229,7 +1330,7 @@ public:
 					self.onOutboundData(strong, message);
 			}));
 
-			outbound_[uuid] = peer;
+			outbound_[peer->key] = peer;
 			{
 				std::lock_guard<std::mutex> lock(returnMutex_);
 				returnTargets_.push_back(peer);
@@ -1239,23 +1340,26 @@ public:
 			peer->pc->setLocalDescription(rtc::Description::Type::Offer);
 		} catch (const std::exception &error) {
 			QC_LOG_ERROR("could not start return feed for a guest: %s", error.what());
-			closeOutbound(uuid);
+			closeOutbound(peer->key);
 		}
 	}
 
-	void restartOutbound(const std::string &uuid)
+	void restartOutbound(const std::string &key)
 	{
-		auto it = outbound_.find(uuid);
+		auto it = outbound_.find(key);
 		if (it == outbound_.end())
 			return;
+		const int feed = it->second->feed;
+		const std::string uuid = it->second->uuid;
 		const std::string session = it->second->session;
-		closeOutbound(uuid);
-		createOutbound(uuid, session);
+		closeOutbound(key);
+		createOutbound(feed, uuid, session);
 	}
 
 	void onRemoteAnswer(const DescriptionMessage &answer)
 	{
-		auto it = outbound_.find(answer.uuid);
+		const std::string key = outboundKey(feed_, answer.uuid);
+		auto it = outbound_.find(key);
 		if (it == outbound_.end())
 			return;
 		auto peer = it->second;
@@ -1267,7 +1371,7 @@ public:
 			flushCandidates(*peer->pc, peer->pendingCandidates);
 		} catch (const std::exception &error) {
 			QC_LOG_WARN("guest sent an unusable answer for the return feed: %s", error.what());
-			closeOutbound(answer.uuid);
+			closeOutbound(key);
 		}
 	}
 
@@ -1280,15 +1384,15 @@ public:
 		if (data.pingToken)
 			sendJson(peer->channel, buildPong(*data.pingToken));
 		if (data.bye) {
-			closeOutbound(peer->uuid);
+			closeOutbound(peer->key);
 			return;
 		}
 		if (data.iceRestartRequested) {
-			restartOutbound(peer->uuid);
+			restartOutbound(peer->key);
 			return;
 		}
 		if (data.carriesSignaling)
-			onSignalingMessage(relayedFrom(message, peer->uuid), peer->uuid);
+			onSignalingMessage(relayedFrom(message, peer->uuid), peer->uuid, peer->feed);
 
 		if (data.wantsAudio)
 			peer->audioWanted = *data.wantsAudio;
@@ -1314,9 +1418,10 @@ public:
 			return;
 		if (state == rtc::PeerConnection::State::Connected) {
 			peer->connected = true;
-			markReturnFeed(peer->uuid, true);
+			if (peer->feed == 0)
+				markReturnFeed(peer->uuid, true);
 		} else if (state == rtc::PeerConnection::State::Failed || state == rtc::PeerConnection::State::Closed) {
-			closeOutbound(peer->uuid);
+			closeOutbound(peer->key);
 		}
 	}
 
@@ -1340,9 +1445,9 @@ public:
 		}
 	}
 
-	void closeOutbound(const std::string &uuid)
+	void closeOutbound(const std::string &key)
 	{
-		auto it = outbound_.find(uuid);
+		auto it = outbound_.find(key);
 		if (it == outbound_.end())
 			return;
 		auto peer = it->second;
@@ -1353,7 +1458,8 @@ public:
 					     returnTargets_.end());
 		}
 		releaseOutbound(peer);
-		markReturnFeed(uuid, false);
+		if (peer->feed == 0)
+			markReturnFeed(peer->uuid, false);
 		updateReturnDemand();
 	}
 
@@ -1570,7 +1676,8 @@ void VdoService::disconnectGuest(const std::string &guestId)
 		// Forget the stream so we do not immediately ask for it again.
 		self.roomStreams_.erase(seat->wireStreamId);
 		self.closeInbound(uuid, "removed by host", false);
-		self.closeOutbound(uuid);
+		self.closeOutbound(Impl::outboundKey(0, uuid));
+		self.closeOutbound(Impl::outboundKey(1, uuid));
 	});
 }
 
@@ -1584,14 +1691,16 @@ bool VdoService::guestStats(const std::string &guestId, GuestMediaStats &stats) 
 	return true;
 }
 
-void VdoService::setReturnFeedFormat(const ReturnFeedFormat &format)
+void VdoService::setReturnFeedFormat(ReturnFeedId feed, const ReturnFeedFormat &format)
 {
 	std::lock_guard<std::mutex> lock(impl_->returnMutex_);
-	impl_->returnFormat_ = format;
+	impl_->returnFormat_[static_cast<int>(feed)] = format;
 }
 
-void VdoService::sendReturnVideo(const uint8_t *data, size_t size, int64_t timestampUs, bool keyframe)
+void VdoService::sendReturnVideo(ReturnFeedId feed, const uint8_t *data, size_t size, int64_t timestampUs,
+				 bool keyframe)
 {
+	const int feedIndex = static_cast<int>(feed);
 	std::vector<std::shared_ptr<OutboundPeer>> targets;
 	{
 		std::lock_guard<std::mutex> lock(impl_->returnMutex_);
@@ -1599,7 +1708,8 @@ void VdoService::sendReturnVideo(const uint8_t *data, size_t size, int64_t times
 	}
 	const rtc::FrameInfo info(std::chrono::duration<double>(static_cast<double>(timestampUs) / 1'000'000.0));
 	for (const auto &peer : targets) {
-		if (!peer->videoWanted.load() || !peer->videoTrack || !peer->videoTrack->isOpen())
+		if (peer->feed != feedIndex || !peer->videoWanted.load() || !peer->videoTrack ||
+		    !peer->videoTrack->isOpen())
 			continue;
 		if (peer->waitingForKeyframe.load()) {
 			if (!keyframe)

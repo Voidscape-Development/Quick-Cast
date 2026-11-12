@@ -28,10 +28,13 @@ namespace qc {
 namespace {
 
 constexpr const char *kOutputId = "quick_cast_return_output";
+/** Video-only variant used by the second feed (libobs fixes an output's media kinds per type). */
+constexpr const char *kVideoOnlyOutputId = "quick_cast_return_output_video";
 
 struct ReturnOutput {
 	obs_output_t *output = nullptr;
 	std::atomic<GuestService *> service{nullptr};
+	ReturnFeedId feed = ReturnFeedId::Main;
 	std::vector<uint8_t> scratch;
 };
 
@@ -113,11 +116,12 @@ void outputEncodedPacket(void *data, encoder_packet *packet)
 		if (encoder && obs_encoder_get_extra_data(encoder, &extra, &extraSize) && extra && extraSize > 0) {
 			state->scratch.assign(extra, extra + extraSize);
 			state->scratch.insert(state->scratch.end(), packet->data, packet->data + packet->size);
-			service->sendReturnVideo(state->scratch.data(), state->scratch.size(), timestampUs, true);
+			service->sendReturnVideo(state->feed, state->scratch.data(), state->scratch.size(), timestampUs,
+						 true);
 			return;
 		}
 	}
-	service->sendReturnVideo(packet->data, packet->size, timestampUs, packet->keyframe);
+	service->sendReturnVideo(state->feed, packet->data, packet->size, timestampUs, packet->keyframe);
 }
 
 uint32_t evenSize(double value)
@@ -142,9 +146,27 @@ void registerReturnOutput()
 	info.stop = outputStop;
 	info.encoded_packet = outputEncodedPacket;
 	obs_register_output(&info);
+
+	obs_output_info videoOnly = info;
+	videoOnly.id = kVideoOnlyOutputId;
+	videoOnly.flags = OBS_OUTPUT_VIDEO | OBS_OUTPUT_ENCODED;
+	videoOnly.encoded_audio_codecs = nullptr;
+	obs_register_output(&videoOnly);
 }
 
-ReturnFeed::ReturnFeed(GuestService *service) : service_(service) {}
+ReturnFeed::ReturnFeed(GuestService *service, ReturnFeedId feed) : service_(service), feed_(feed) {}
+
+bool ReturnFeed::enabled() const
+{
+	if (!settings_.returnFeedEnabled)
+		return false;
+	return feed_ == ReturnFeedId::Main || settings_.secondFeedEnabled;
+}
+
+const std::string &ReturnFeed::sourceName() const
+{
+	return feed_ == ReturnFeedId::Main ? settings_.returnVideoSource : settings_.secondVideoSource;
+}
 
 ReturnFeed::~ReturnFeed()
 {
@@ -186,20 +208,21 @@ void ReturnFeed::configure(const Settings &settings)
 	const bool restart = wanted_;
 	// Encoder parameters cannot change while encoding; rebuild from scratch.
 	release();
-	if (restart && settings_.returnFeedEnabled)
+	if (restart && enabled())
 		start();
 }
 
 bool ReturnFeed::prepareSourceView(const obs_video_info &mainVideo, video_t *&videoOutput, uint32_t &width,
 				   uint32_t &height)
 {
-	if (settings_.returnVideoSource.empty())
+	const std::string &name = sourceName();
+	if (name.empty())
 		return false;
 
-	OBSSourceAutoRelease source = obs_get_source_by_name(settings_.returnVideoSource.c_str());
+	OBSSourceAutoRelease source = obs_get_source_by_name(name.c_str());
 	if (!source) {
 		blog(LOG_WARNING, "[quick-cast] return feed source '%s' not found; sending the program instead",
-		     settings_.returnVideoSource.c_str());
+		     name.c_str());
 		return false;
 	}
 
@@ -227,7 +250,7 @@ bool ReturnFeed::prepareSourceView(const obs_video_info &mainVideo, video_t *&vi
 	video_t *viewOutput = obs_view_add2(view_, &viewVideo);
 	if (!viewOutput) {
 		blog(LOG_WARNING, "[quick-cast] could not render '%s' for the return feed; sending the program instead",
-		     settings_.returnVideoSource.c_str());
+		     name.c_str());
 		releaseView();
 		return false;
 	}
@@ -269,7 +292,9 @@ bool ReturnFeed::createObjects()
 	obs_data_set_string(videoSettings, "tune", "zerolatency");
 	obs_data_set_int(videoSettings, "bf", 0);
 	obs_data_set_bool(videoSettings, "repeat_headers", true);
-	videoEncoder_ = obs_video_encoder_create("obs_x264", "Quick Cast Return Video", videoSettings, nullptr);
+	const bool main = feed_ == ReturnFeedId::Main;
+	videoEncoder_ = obs_video_encoder_create(
+		"obs_x264", main ? "Quick Cast Return Video" : "Quick Cast Second Video", videoSettings, nullptr);
 	if (!videoEncoder_) {
 		blog(LOG_ERROR, "[quick-cast] could not create the return feed video encoder (x264)");
 		return false;
@@ -279,28 +304,36 @@ bool ReturnFeed::createObjects()
 	if (!customSource && (width != nativeWidth || height != nativeHeight))
 		obs_encoder_set_scaled_size(videoEncoder_, width, height);
 
-	OBSDataAutoRelease audioSettings = obs_data_create();
-	obs_data_set_int(audioSettings, "bitrate", settings_.returnAudioBitrateKbps);
-	const size_t mixer = static_cast<size_t>(settings_.returnAudioTrack - 1);
-	audioEncoder_ =
-		obs_audio_encoder_create("ffmpeg_opus", "Quick Cast Return Audio", audioSettings, mixer, nullptr);
-	if (!audioEncoder_) {
-		blog(LOG_ERROR, "[quick-cast] could not create the return feed audio encoder (Opus)");
-		videoEncoder_ = nullptr;
-		return false;
+	if (main) {
+		OBSDataAutoRelease audioSettings = obs_data_create();
+		obs_data_set_int(audioSettings, "bitrate", settings_.returnAudioBitrateKbps);
+		const size_t mixer = static_cast<size_t>(settings_.returnAudioTrack - 1);
+		audioEncoder_ = obs_audio_encoder_create("ffmpeg_opus", "Quick Cast Return Audio", audioSettings, mixer,
+							 nullptr);
+		if (!audioEncoder_) {
+			blog(LOG_ERROR, "[quick-cast] could not create the return feed audio encoder (Opus)");
+			videoEncoder_ = nullptr;
+			releaseView();
+			return false;
+		}
+		obs_encoder_set_audio(audioEncoder_, obs_get_audio());
 	}
-	obs_encoder_set_audio(audioEncoder_, obs_get_audio());
 
-	output_ = obs_output_create(kOutputId, "Quick Cast Return Feed", nullptr, nullptr);
+	output_ = obs_output_create(main ? kOutputId : kVideoOnlyOutputId,
+				    main ? "Quick Cast Return Feed" : "Quick Cast Second Feed", nullptr, nullptr);
 	if (!output_) {
 		videoEncoder_ = nullptr;
 		audioEncoder_ = nullptr;
+		releaseView();
 		return false;
 	}
-	if (auto *state = static_cast<ReturnOutput *>(obs_obj_get_data(output_)))
+	if (auto *state = static_cast<ReturnOutput *>(obs_obj_get_data(output_))) {
+		state->feed = feed_;
 		state->service = service_;
+	}
 	obs_output_set_video_encoder(output_, videoEncoder_);
-	obs_output_set_audio_encoder(output_, audioEncoder_, 0);
+	if (audioEncoder_)
+		obs_output_set_audio_encoder(output_, audioEncoder_, 0);
 
 	ReturnFeedFormat format;
 	format.width = width;
@@ -308,14 +341,14 @@ bool ReturnFeed::createObjects()
 	format.framesPerSecond = fps;
 	format.videoBitrateKbps = settings_.returnVideoBitrateKbps;
 	format.audioBitrateKbps = settings_.returnAudioBitrateKbps;
-	service_->setReturnFeedFormat(format);
+	service_->setReturnFeedFormat(feed_, format);
 	return true;
 }
 
 void ReturnFeed::start()
 {
 	wanted_ = true;
-	if (!settings_.returnFeedEnabled || active())
+	if (!enabled() || active())
 		return;
 	if (!output_ && !createObjects())
 		return;
@@ -324,8 +357,12 @@ void ReturnFeed::start()
 		blog(LOG_ERROR, "[quick-cast] could not start the return feed: %s", error ? error : "unknown error");
 		return;
 	}
-	blog(LOG_INFO, "[quick-cast] return feed started (video: %s, audio track %d)",
-	     view_ ? settings_.returnVideoSource.c_str() : "program", settings_.returnAudioTrack);
+	if (feed_ == ReturnFeedId::Main)
+		blog(LOG_INFO, "[quick-cast] return feed started (video: %s, audio track %d)",
+		     view_ ? sourceName().c_str() : "program", settings_.returnAudioTrack);
+	else
+		blog(LOG_INFO, "[quick-cast] second feed started (video: %s)",
+		     view_ ? sourceName().c_str() : "program");
 }
 
 void ReturnFeed::stop()
@@ -335,7 +372,7 @@ void ReturnFeed::stop()
 		return;
 	if (obs_output_active(output_)) {
 		obs_output_stop(output_);
-		blog(LOG_INFO, "[quick-cast] return feed stopped");
+		blog(LOG_INFO, "[quick-cast] %s feed stopped", feed_ == ReturnFeedId::Main ? "return" : "second");
 	}
 }
 

@@ -134,9 +134,17 @@ struct ShowConfig {
 	GuestQuality defaultQuality;
 	/** Publish the return feed so guests can see and hear the show. */
 	bool returnFeedEnabled = true;
+	/** Also publish a second, video-only feed (e.g. the program next to the host's camera). */
+	bool secondFeedEnabled = false;
 	/** Extra ICE servers (TURN) for guests behind restrictive networks. */
 	std::vector<IceServer> iceServers;
 };
+
+/**
+ * The host can publish up to two feeds to guests. The main feed carries video and the host's audio; the second is
+ * video only and appears to guests as a separate tile.
+ */
+enum class ReturnFeedId { Main = 0, Second = 1 };
 
 /** Format of the return feed the host publishes to guests. */
 struct ReturnFeedFormat {
@@ -193,10 +201,11 @@ public:
 	virtual bool guestStats(const std::string &guestId, GuestMediaStats &stats) const = 0;
 
 	// --- Return feed (host -> guests). Safe to call from any thread. ---
-	virtual void setReturnFeedFormat(const ReturnFeedFormat &format) = 0;
+	virtual void setReturnFeedFormat(ReturnFeedId feed, const ReturnFeedFormat &format) = 0;
 	/** One H.264 access unit (Annex-B, parameter sets in-band on keyframes). */
-	virtual void sendReturnVideo(const uint8_t *data, size_t size, int64_t timestampUs, bool keyframe) = 0;
-	/** One Opus packet. */
+	virtual void sendReturnVideo(ReturnFeedId feed, const uint8_t *data, size_t size, int64_t timestampUs,
+				     bool keyframe) = 0;
+	/** One Opus packet for the main feed. */
 	virtual void sendReturnAudio(const uint8_t *data, size_t size, int64_t timestampUs) = 0;
 };
 

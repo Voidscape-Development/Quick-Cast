@@ -52,6 +52,12 @@ struct Settings {
 	 * i.e. exactly what the audience sees.
 	 */
 	std::string returnVideoSource;
+	/**
+	 * Second, video-only feed shown to guests as a separate tile, e.g. the program or a screen capture next to
+	 * the host's camera. Empty source name means the program output.
+	 */
+	bool secondFeedEnabled = false;
+	std::string secondVideoSource;
 	uint32_t returnHeight = 720;
 	uint32_t returnVideoBitrateKbps = 1500;
 	uint32_t returnAudioBitrateKbps = 96;

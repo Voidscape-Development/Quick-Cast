@@ -25,19 +25,19 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 namespace qc {
 
-/** Registers the "quick_cast_return_output" output type with libobs. Call once from obs_module_load. */
+/** Registers the return feed output types with libobs. Call once from obs_module_load. */
 void registerReturnOutput();
 
 /**
- * The return feed: OBS' program video and one audio track, encoded with a dedicated low-latency encoder pair and
- * handed to the GuestService.
+ * One of the host's feeds to guests, encoded with dedicated low-latency encoders and handed to the GuestService.
+ * The main feed is the program (or a chosen source) plus one audio track; the optional second feed is video only.
  *
  * It uses its own encoders so it never interferes with streaming or recording, and it only runs while at least one
  * guest is actually watching. All methods must be called on the UI thread.
  */
 class ReturnFeed {
 public:
-	explicit ReturnFeed(GuestService *service);
+	ReturnFeed(GuestService *service, ReturnFeedId feed);
 	~ReturnFeed();
 
 	/** Applies new settings; restarts the encoders if they are running. */
@@ -52,7 +52,11 @@ public:
 private:
 	bool createObjects();
 
+	bool enabled() const;
+	const std::string &sourceName() const;
+
 	GuestService *service_;
+	ReturnFeedId feed_;
 	Settings settings_;
 	bool wanted_ = false;
 	void releaseView();

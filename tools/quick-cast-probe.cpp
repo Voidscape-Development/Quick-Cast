@@ -258,8 +258,8 @@ int main(int argc, char **argv)
 				while (running) {
 					const int64_t ptsUs = static_cast<int64_t>(frame * 1'000'000 / returnFps);
 					const auto &unit = units[frame % units.size()];
-					service.sendReturnVideo(unit.first.data(), unit.first.size(), ptsUs,
-								unit.second);
+					service.sendReturnVideo(ReturnFeedId::Main, unit.first.data(),
+								unit.first.size(), ptsUs, unit.second);
 					while (static_cast<int64_t>(audioFrame * 20'000) <= ptsUs) {
 						service.sendReturnAudio(silence, sizeof(silence),
 									static_cast<int64_t>(audioFrame * 20'000));

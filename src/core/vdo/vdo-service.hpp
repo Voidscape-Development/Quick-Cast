@@ -35,7 +35,9 @@ struct VdoServiceOptions {
  * GuestService backed by the public VDO.Ninja signaling network.
  *
  * The host joins a VDO.Ninja room as its director, views every guest's stream over a dedicated peer connection, and
- * (optionally) seeds one stream of its own, the return feed, that guests' browsers pick up automatically.
+ * (optionally) seeds one stream of its own, the return feed, that guests' browsers pick up automatically. A second
+ * feed is published by joining the room a second time as an ordinary member, which is how the web app itself
+ * presents an extra stream from the same person.
  */
 class VdoService final : public GuestService {
 public:
@@ -59,8 +61,9 @@ public:
 	void disconnectGuest(const std::string &guestId) override;
 	bool guestStats(const std::string &guestId, GuestMediaStats &stats) const override;
 
-	void setReturnFeedFormat(const ReturnFeedFormat &format) override;
-	void sendReturnVideo(const uint8_t *data, size_t size, int64_t timestampUs, bool keyframe) override;
+	void setReturnFeedFormat(ReturnFeedId feed, const ReturnFeedFormat &format) override;
+	void sendReturnVideo(ReturnFeedId feed, const uint8_t *data, size_t size, int64_t timestampUs,
+			     bool keyframe) override;
 	void sendReturnAudio(const uint8_t *data, size_t size, int64_t timestampUs) override;
 
 private:
