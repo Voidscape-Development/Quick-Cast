@@ -33,13 +33,13 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.example.plugintemplate-for-obs"
+            "bundleId": "dev.voidscape.quick-cast"
         }
     },
-    "name": "plugintemplate-for-obs",
-    "displayName": "Plugin Template for OBS",
-    "version": "1.0.0",
-    "author": "Your Name Here",
-    "website": "https://example.com",
+    "name": "quick-cast",
+    "displayName": "Quick Cast",
+    "version": "0.1.0",
+    "author": "Voidscape Development",
+    "website": "https://github.com/Voidscape-Development/Quick-Cast",
     "email": "me@example.com"
 }
