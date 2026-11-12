@@ -14,7 +14,6 @@ else()
 endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(BUILD_SHARED_LIBS OFF)
 
 # --- nlohmann_json -------------------------------------------------------------------------------------------------
 find_package(nlohmann_json 3.10 QUIET)
@@ -45,6 +44,11 @@ if(WIN32 OR APPLE)
 else()
   set(QUICK_CAST_TLS_BACKEND "openssl" CACHE INTERNAL "")
 endif()
+
+# libdatachannel always defines both a "datachannel" and a "datachannel-static" target and we only link the static
+# one. Leave the former as a shared library (it is never built): its MSVC install rule references the target's PDB,
+# which CMake only allows for linked artifacts. libdatachannel builds its own dependencies statically either way.
+set(BUILD_SHARED_LIBS ON)
 
 FetchContent_Declare(
   libdatachannel
