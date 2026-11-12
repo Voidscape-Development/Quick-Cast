@@ -15,6 +15,11 @@ endif()
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# The project enables Clang modules for Xcode builds. usrsctp declares its own versions of BSD kernel structures
+# (e.g. struct inpcb) that clash with the system modules, so third-party code is compiled without them.
+set(CMAKE_XCODE_ATTRIBUTE_CLANG_ENABLE_MODULES NO)
+set(CMAKE_XCODE_ATTRIBUTE_CLANG_MODULES_AUTOLINK NO)
+
 # --- nlohmann_json -------------------------------------------------------------------------------------------------
 find_package(nlohmann_json 3.10 QUIET)
 if(NOT nlohmann_json_FOUND)
