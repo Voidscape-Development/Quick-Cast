@@ -52,6 +52,10 @@ set_target_properties(
 
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
+if(MSVC)
+  target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE /wd4244 /wd4267)
+endif()
+
 target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
@@ -60,9 +64,10 @@ target_sources(
     src/media/audio-decoder.hpp
     src/media/video-decoder.cpp
     src/media/video-decoder.hpp
+    src/obs/guest-player.cpp
+    src/obs/guest-player.hpp
     src/obs/guest-source.cpp
     src/obs/guest-source.hpp
-    src/obs/obs-helpers.hpp
     src/obs/return-output.cpp
     src/obs/return-output.hpp
     src/obs/scene-integration.cpp
@@ -77,7 +82,7 @@ target_sources(
     src/ui/quick-cast-dock.hpp
     src/ui/settings-dialog.cpp
     src/ui/settings-dialog.hpp
+    src/ui/ui-helpers.hpp
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
-

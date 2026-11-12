@@ -217,6 +217,9 @@ jobs:
           target: x86_64
           config: ${{ needs.check-event.outputs.config }}
 
+      - name: Run Unit Tests 🧪
+        run: ctest --test-dir build_x86_64 --output-on-failure
+
       - name: Package Plugin 📀
         uses: ./.github/actions/package-plugin
         with:

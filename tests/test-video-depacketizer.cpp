@@ -1,3 +1,21 @@
+/*
+Quick Cast - remote guests for OBS Studio
+Copyright (C) 2026 Voidscape Development
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>
+*/
+
 #include "rtp/video-depacketizer.hpp"
 
 #include <gtest/gtest.h>
@@ -32,7 +50,9 @@ TEST(H264Depacketizer, StapAAndFuAKeyframe)
 {
 	H264Depacketizer depacketizer;
 	std::vector<EncodedFrame> frames;
-	const auto sink = [&](EncodedFrame &&frame) { frames.push_back(std::move(frame)); };
+	const auto sink = [&](EncodedFrame &&frame) {
+		frames.push_back(std::move(frame));
+	};
 	EXPECT_TRUE(depacketizer.needsKeyframe());
 
 	// STAP-A carrying SPS (0x67 ..) and PPS (0x68 ..)
@@ -68,13 +88,15 @@ TEST(H264Depacketizer, LossDropsUntilNextKeyframe)
 {
 	H264Depacketizer depacketizer;
 	std::vector<EncodedFrame> frames;
-	const auto sink = [&](EncodedFrame &&frame) { frames.push_back(std::move(frame)); };
+	const auto sink = [&](EncodedFrame &&frame) {
+		frames.push_back(std::move(frame));
+	};
 
 	depacketizer.push(makePacket({0x65, 1}, 1000, true), sink);
 	ASSERT_EQ(frames.size(), 1u);
 
 	depacketizer.push(makePacket({0x7C, 0x81, 1}, 2000, false), sink); // start of a fragmented delta frame
-	depacketizer.notifyLoss();                                          // middle lost
+	depacketizer.notifyLoss();                                         // middle lost
 	depacketizer.push(makePacket({0x7C, 0x41, 3}, 2000, true), sink);  // tail
 	EXPECT_EQ(frames.size(), 1u) << "incomplete frame must not be emitted";
 	EXPECT_TRUE(depacketizer.needsKeyframe());
@@ -92,7 +114,9 @@ TEST(H264Depacketizer, TimestampChangeFlushesWithoutMarker)
 {
 	H264Depacketizer depacketizer;
 	std::vector<EncodedFrame> frames;
-	const auto sink = [&](EncodedFrame &&frame) { frames.push_back(std::move(frame)); };
+	const auto sink = [&](EncodedFrame &&frame) {
+		frames.push_back(std::move(frame));
+	};
 	depacketizer.push(makePacket({0x65, 1}, 1000, false), sink);
 	depacketizer.push(makePacket({0x41, 2}, 2000, true), sink);
 	ASSERT_EQ(frames.size(), 2u);
@@ -113,7 +137,9 @@ TEST(Vp8Depacketizer, AssemblesKeyframeAcrossPackets)
 {
 	Vp8Depacketizer depacketizer;
 	std::vector<EncodedFrame> frames;
-	const auto sink = [&](EncodedFrame &&frame) { frames.push_back(std::move(frame)); };
+	const auto sink = [&](EncodedFrame &&frame) {
+		frames.push_back(std::move(frame));
+	};
 
 	// X=1,S=1,PID=0 with a 15-bit picture ID; payload byte 0 has P=0 (keyframe).
 	depacketizer.push(makePacket({0x90, 0x80, 0x80, 0x01, 0x10, 0xAA}, 1000, false), sink);
@@ -134,7 +160,9 @@ TEST(Vp8Depacketizer, WaitsForKeyframeAfterLoss)
 {
 	Vp8Depacketizer depacketizer;
 	int frames = 0;
-	const auto sink = [&](EncodedFrame &&) { ++frames; };
+	const auto sink = [&](EncodedFrame &&) {
+		++frames;
+	};
 	depacketizer.push(makePacket({0x10, 0x10}, 1000, true), sink);
 	EXPECT_EQ(frames, 1);
 	depacketizer.notifyLoss();

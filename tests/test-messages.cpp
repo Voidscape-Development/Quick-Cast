@@ -1,3 +1,21 @@
+/*
+Quick Cast - remote guests for OBS Studio
+Copyright (C) 2026 Voidscape Development
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>
+*/
+
 #include "vdo/messages.hpp"
 
 #include <gtest/gtest.h>
@@ -38,15 +56,15 @@ TEST(Messages, Listing)
 
 TEST(Messages, StreamEvents)
 {
-	const auto &added = expect<StreamAddedMessage>(
-		parse(R"({"request":"someonejoined","UUID":"peer","streamID":"cam_5"})"));
+	const auto &added =
+		expect<StreamAddedMessage>(parse(R"({"request":"someonejoined","UUID":"peer","streamID":"cam_5"})"));
 	EXPECT_EQ(added.member.streamId, "cam_5");
 	EXPECT_EQ(added.member.uuid, "peer");
 
 	expect<IgnoredMessage>(parse(R"({"request":"someonejoined","UUID":"peer"})"));
 	expect<StreamAddedMessage>(parse(R"({"request":"videoaddedtoroom","UUID":"p","streamID":"x"})"));
-	const auto &removed = expect<StreamRemovedMessage>(
-		parse(R"({"request":"videoremovedfromroom","UUID":"p","streamID":"x"})"));
+	const auto &removed =
+		expect<StreamRemovedMessage>(parse(R"({"request":"videoremovedfromroom","UUID":"p","streamID":"x"})"));
 	EXPECT_EQ(removed.member.streamId, "x");
 }
 
@@ -143,8 +161,8 @@ TEST(Messages, CandidateForms)
 TEST(Messages, EncryptedCandidatesRoundTrip)
 {
 	const Credentials room("hunter2", "vdo.ninja");
-	const auto built =
-		buildCandidates(room, "peer", "sess", true, {IceCandidate{"a=candidate:1 1 UDP 1 1.2.3.4 5 typ host", "video"}});
+	const auto built = buildCandidates(room, "peer", "sess", true,
+					   {IceCandidate{"a=candidate:1 1 UDP 1 1.2.3.4 5 typ host", "video"}});
 	ASSERT_TRUE(built);
 	EXPECT_EQ((*built)["type"], "local");
 	EXPECT_TRUE((*built)["candidates"].is_string());
@@ -159,8 +177,8 @@ TEST(Messages, EncryptedCandidatesRoundTrip)
 
 TEST(Messages, FallbackUuidForRelayedMessages)
 {
-	const auto parsed = parseSignalingMessage(
-		Json::parse(R"({"description":{"type":"offer","sdp":"v=0"}})"), {}, "relay-peer");
+	const auto parsed =
+		parseSignalingMessage(Json::parse(R"({"description":{"type":"offer","sdp":"v=0"}})"), {}, "relay-peer");
 	EXPECT_EQ(expect<DescriptionMessage>(parsed).uuid, "relay-peer");
 }
 

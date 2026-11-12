@@ -68,3 +68,10 @@ else()
   find_package(OpenSSL REQUIRED)
   target_link_libraries(quick-cast-core PRIVATE OpenSSL::Crypto)
 endif()
+
+if(MSVC)
+  # Mirrors -Wno-conversion from the GCC/Clang configuration: narrowing between integer widths is pervasive in
+  # packet parsing and checked by hand there.
+  target_compile_options(quick-cast-core PRIVATE /wd4244 /wd4267)
+  target_compile_definitions(quick-cast-core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()

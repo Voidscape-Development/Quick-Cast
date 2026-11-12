@@ -1,3 +1,21 @@
+/*
+Quick Cast - remote guests for OBS Studio
+Copyright (C) 2026 Voidscape Development
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>
+*/
+
 #include "rtp/receive-stream.hpp"
 #include "rtp/rtcp.hpp"
 
@@ -23,10 +41,10 @@ TEST(RtpPacket, ParsesHeaderExtensionAndPadding)
 {
 	// V=2, P=1, X=1, CC=1
 	std::vector<uint8_t> raw = {0xB1, 0xE0, 0x12, 0x34, 0, 0, 0, 100, 0, 0, 0, 7};
-	raw.insert(raw.end(), {0, 0, 0, 9});                         // CSRC
-	raw.insert(raw.end(), {0xBE, 0xDE, 0, 1, 1, 2, 3, 4});       // one-word extension
-	raw.insert(raw.end(), {0xAA, 0xBB, 0xCC});                   // payload
-	raw.insert(raw.end(), {0, 0, 3});                            // 3 bytes padding
+	raw.insert(raw.end(), {0, 0, 0, 9});                   // CSRC
+	raw.insert(raw.end(), {0xBE, 0xDE, 0, 1, 1, 2, 3, 4}); // one-word extension
+	raw.insert(raw.end(), {0xAA, 0xBB, 0xCC});             // payload
+	raw.insert(raw.end(), {0, 0, 3});                      // 3 bytes padding
 
 	const auto packet = parsePacket(raw.data(), raw.size());
 	ASSERT_TRUE(packet);
@@ -98,7 +116,7 @@ TEST(Rtcp, SenderReportInCompound)
 	sr[1] = 200;
 	writeU16(sr.data() + 2, 6);
 	writeU32(sr.data() + 4, 0x11223344);
-	writeU32(sr.data() + 8, 100);        // NTP seconds
+	writeU32(sr.data() + 8, 100);         // NTP seconds
 	writeU32(sr.data() + 12, 0x80000000); // NTP fraction = .5
 	writeU32(sr.data() + 16, 90000);
 	const auto pli = buildPli(1, 2);

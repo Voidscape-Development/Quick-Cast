@@ -1,3 +1,21 @@
+/*
+Quick Cast - remote guests for OBS Studio
+Copyright (C) 2026 Voidscape Development
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>
+*/
+
 #include "vdo-service.hpp"
 
 #include "data-messages.hpp"
@@ -12,10 +30,15 @@
 
 #include <rtc/rtc.hpp>
 
+#include <algorithm>
+
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <optional>
+#include <tuple>
 
 namespace qc::vdo {
 
@@ -261,13 +284,12 @@ public:
 			auto self = weak.lock();
 			if (!self)
 				return;
-			self->executor_.post(
-				[weak, task, argsTuple = std::make_tuple(std::decay_t<decltype(args)>(
-							     std::forward<decltype(args)>(args))...)]() mutable {
-					if (auto strong = weak.lock())
-						std::apply([&](auto &...unpacked) { task(*strong, unpacked...); },
-							   argsTuple);
-				});
+			self->executor_.post([weak, task,
+					      argsTuple = std::make_tuple(std::decay_t<decltype(args)>(
+						      std::forward<decltype(args)>(args))...)]() mutable {
+				if (auto strong = weak.lock())
+					std::apply([&](auto &...unpacked) { task(*strong, unpacked...); }, argsTuple);
+			});
 		};
 	}
 
@@ -335,9 +357,12 @@ public:
 			return;
 		}
 
-		seats_.clear();
-		for (const GuestSeat &seat : config.seats)
-			ensureSeat(seat, false);
+		// Seats survive restarts: media sinks are attached to them independently of the show running.
+		for (const GuestSeat &seat : config.seats) {
+			auto existing = ensureSeat(seat, false);
+			existing->seat.name = seat.name;
+			existing->quality = config.defaultQuality;
+		}
 
 		running_ = true;
 		setState(ServiceState::Connecting);
@@ -527,10 +552,10 @@ public:
 
 		if (auto it = outbound_.find(request.uuid); it != outbound_.end()) {
 			const auto &existing = it->second;
-			const bool negotiating =
-				!existing->connected &&
-				std::chrono::steady_clock::now() - existing->created < kNegotiationResendWindow &&
-				!sessionsConflict(existing->session, request.session);
+			const bool negotiating = !existing->connected &&
+						 std::chrono::steady_clock::now() - existing->created <
+							 kNegotiationResendWindow &&
+						 !sessionsConflict(existing->session, request.session);
 			if (negotiating) {
 				// Duplicate request while our first offer is still in flight: repeat it verbatim.
 				if (existing->cachedOffer && signaling_)
@@ -557,7 +582,8 @@ public:
 		auto inboundIt = inbound_.find(message.uuid);
 		auto outboundIt = outbound_.find(message.uuid);
 		std::shared_ptr<InboundPeer> inboundPeer = inboundIt != inbound_.end() ? inboundIt->second : nullptr;
-		std::shared_ptr<OutboundPeer> outboundPeer = outboundIt != outbound_.end() ? outboundIt->second : nullptr;
+		std::shared_ptr<OutboundPeer> outboundPeer = outboundIt != outbound_.end() ? outboundIt->second
+											   : nullptr;
 
 		// VDO.Ninja runs one connection per direction between the same two peers; `type` says which one a
 		// candidate belongs to ("local" = sent by the offering/publishing side).
@@ -656,7 +682,8 @@ public:
 		seat->wireStreamId = member.streamId;
 
 		// Already receiving this guest (e.g. the server re-announced the stream).
-		if (!seat->uuid.empty() && inbound_.count(seat->uuid) && (member.uuid.empty() || member.uuid == seat->uuid))
+		if (!seat->uuid.empty() && inbound_.count(seat->uuid) &&
+		    (member.uuid.empty() || member.uuid == seat->uuid))
 			return;
 
 		if (seat->status.connection == GuestConnection::Offline) {
@@ -850,8 +877,9 @@ public:
 							       : rtc::Description::Direction::Inactive);
 		const bool h264 = codec->name == "H264";
 		if (h264)
-			media.addH264Codec(codec->payloadType,
-					   codec->fmtp.empty() ? std::nullopt : std::optional<std::string>(codec->fmtp));
+			media.addH264Codec(codec->payloadType, codec->fmtp.empty()
+								       ? std::nullopt
+								       : std::optional<std::string>(codec->fmtp));
 		else
 			media.addVP8Codec(codec->payloadType);
 
@@ -865,7 +893,8 @@ public:
 			MediaReceiver::Config receiverConfig;
 			receiverConfig.video = true;
 			receiverConfig.payloadType = codec->payloadType;
-			receiverConfig.clockRate = codec->clockRate > 0 ? static_cast<uint32_t>(codec->clockRate) : 90000;
+			receiverConfig.clockRate = codec->clockRate > 0 ? static_cast<uint32_t>(codec->clockRate)
+									: 90000;
 			receiverConfig.videoCodec = rtpCodec;
 			receiverConfig.rembBitrateBps = static_cast<uint64_t>(seat.quality.maxVideoBitrateKbps) * 1000;
 			receiverConfig.clock = peer->clock;
@@ -897,7 +926,8 @@ public:
 		rtc::Description::Audio media(section.mid, use ? rtc::Description::Direction::RecvOnly
 							       : rtc::Description::Direction::Inactive);
 		// Our receive capabilities: stereo and in-band FEC, so the guest's client may use both.
-		media.addOpusCodec(codec->payloadType, std::string("minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1"));
+		media.addOpusCodec(codec->payloadType,
+				   std::string("minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1"));
 
 		InboundTrack entry;
 		entry.video = false;
@@ -924,7 +954,8 @@ public:
 		peer->tracks.emplace(section.mid, std::move(entry));
 	}
 
-	void onInboundChannel(const std::shared_ptr<InboundPeer> &peer, const std::shared_ptr<rtc::DataChannel> &channel)
+	void onInboundChannel(const std::shared_ptr<InboundPeer> &peer,
+			      const std::shared_ptr<rtc::DataChannel> &channel)
 	{
 		if (!isCurrent(peer) || !channel)
 			return;

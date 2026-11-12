@@ -1,7 +1,25 @@
+/*
+Quick Cast - remote guests for OBS Studio
+Copyright (C) 2026 Voidscape Development
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>
+*/
+
 // Developer tool: hosts a show from the command line and reports what arrives.
 //
 //   quick-cast-probe --room NAME [--password PW] [--seat ID:Name]... [--seconds N]
-//                    [--dump DIR] [--return-h264 FILE --return-fps N] [--no-return]
+//                    [--dump DIR] [--return-h264 FILE --return-fps N] [--no-return] [--kick-after N]
 //
 // --dump writes each guest's raw video elementary stream to DIR/<seat>.h264|.ivf-less vp8 frames and the Opus
 // packet sizes are only counted. --return-h264 loops an Annex-B file as the return feed (one access unit per frame,
@@ -114,7 +132,7 @@ std::vector<std::pair<std::vector<uint8_t>, bool>> loadAccessUnits(const std::st
 	std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 	std::vector<size_t> starts;
 	for (size_t i = 0; i + 3 < data.size(); ++i) {
-		if (data[i] == 0 && data[i + 1] == 0 && (data[i + 2] == 1 || (data[i + 2] == 0 && data[i + 3] == 1)))  {
+		if (data[i] == 0 && data[i + 1] == 0 && (data[i + 2] == 1 || (data[i + 2] == 0 && data[i + 3] == 1))) {
 			starts.push_back(i);
 			i += 2;
 		}
@@ -138,7 +156,8 @@ std::vector<std::pair<std::vector<uint8_t>, bool>> loadAccessUnits(const std::st
 			currentKey = false;
 			haveSlice = false;
 		}
-		current.insert(current.end(), data.begin() + static_cast<long>(begin), data.begin() + static_cast<long>(end));
+		current.insert(current.end(), data.begin() + static_cast<long>(begin),
+			       data.begin() + static_cast<long>(end));
 		if (type == 5)
 			currentKey = true;
 		if (isSlice)
@@ -159,10 +178,13 @@ int main(int argc, char **argv)
 	std::string returnFile;
 	int returnFps = 30;
 	bool verbose = false;
+	int kickAfter = 0;
 
 	for (int i = 1; i < argc; ++i) {
 		const std::string arg = argv[i];
-		const auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
+		const auto next = [&]() -> std::string {
+			return i + 1 < argc ? argv[++i] : "";
+		};
 		if (arg == "--room")
 			config.room = next();
 		else if (arg == "--password")
@@ -183,6 +205,8 @@ int main(int argc, char **argv)
 			config.defaultQuality.maxVideoBitrateKbps = static_cast<uint32_t>(std::stoi(next()));
 		else if (arg == "--verbose")
 			verbose = true;
+		else if (arg == "--kick-after")
+			kickAfter = std::stoi(next());
 		else if (arg == "--seat") {
 			const std::string value = next();
 			const size_t colon = value.find(':');
@@ -191,7 +215,8 @@ int main(int argc, char **argv)
 		}
 	}
 	if (config.room.empty()) {
-		std::fprintf(stderr, "usage: quick-cast-probe --room NAME [--password PW] [--seat ID:Name] [--seconds N]\n");
+		std::fprintf(stderr,
+			     "usage: quick-cast-probe --room NAME [--password PW] [--seat ID:Name] [--seconds N]\n");
 		return 2;
 	}
 
@@ -233,15 +258,16 @@ int main(int argc, char **argv)
 				while (running) {
 					const int64_t ptsUs = static_cast<int64_t>(frame * 1'000'000 / returnFps);
 					const auto &unit = units[frame % units.size()];
-					service.sendReturnVideo(unit.first.data(), unit.first.size(), ptsUs, unit.second);
+					service.sendReturnVideo(unit.first.data(), unit.first.size(), ptsUs,
+								unit.second);
 					while (static_cast<int64_t>(audioFrame * 20'000) <= ptsUs) {
 						service.sendReturnAudio(silence, sizeof(silence),
 									static_cast<int64_t>(audioFrame * 20'000));
 						++audioFrame;
 					}
 					++frame;
-					std::this_thread::sleep_until(start +
-								      std::chrono::microseconds(frame * 1'000'000 / returnFps));
+					std::this_thread::sleep_until(
+						start + std::chrono::microseconds(frame * 1'000'000 / returnFps));
 				}
 			});
 		}
@@ -250,19 +276,26 @@ int main(int argc, char **argv)
 	for (int second = 1; second <= seconds; ++second) {
 		std::this_thread::sleep_for(std::chrono::seconds(1));
 		std::lock_guard<std::mutex> lock(listener.mutex);
+		if (kickAfter > 0 && second == kickAfter) {
+			for (const auto &[id, sink] : listener.sinks) {
+				std::printf("[probe] disconnecting %s\n", id.c_str());
+				service.disconnectGuest(id);
+			}
+		}
 		for (const auto &[id, sink] : listener.sinks) {
 			GuestMediaStats stats;
 			const bool have = service.guestStats(id, stats);
 			const double avSkewMs = (static_cast<double>(sink->lastVideoNs.load()) -
 						 static_cast<double>(sink->lastAudioNs.load())) /
 						1e6;
-			std::printf("[stats t=%d] %s codec=%d frames=%llu key=%llu vbytes=%llu audio=%llu kbps=%.0f loss=%.3f "
-				    "jitter=%.1fms pli=%llu avskew=%.0fms stops=%d\n",
-				    second, id.c_str(), sink->codec.load(), (unsigned long long)sink->videoFrames.load(),
-				    (unsigned long long)sink->keyframes.load(), (unsigned long long)sink->videoBytes.load(),
-				    (unsigned long long)sink->audioPackets.load(), have ? stats.videoBitrateKbps : 0.0,
-				    have ? stats.videoLoss : 0.0, have ? stats.jitterMs : 0.0,
-				    (unsigned long long)(have ? stats.keyframeRequests : 0), avSkewMs, sink->stops.load());
+			std::printf(
+				"[stats t=%d] %s codec=%d frames=%llu key=%llu vbytes=%llu audio=%llu kbps=%.0f loss=%.3f "
+				"jitter=%.1fms pli=%llu avskew=%.0fms stops=%d\n",
+				second, id.c_str(), sink->codec.load(), (unsigned long long)sink->videoFrames.load(),
+				(unsigned long long)sink->keyframes.load(), (unsigned long long)sink->videoBytes.load(),
+				(unsigned long long)sink->audioPackets.load(), have ? stats.videoBitrateKbps : 0.0,
+				have ? stats.videoLoss : 0.0, have ? stats.jitterMs : 0.0,
+				(unsigned long long)(have ? stats.keyframeRequests : 0), avSkewMs, sink->stops.load());
 		}
 		std::fflush(stdout);
 	}

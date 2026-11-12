@@ -34,6 +34,9 @@ set(NO_TESTS ON CACHE BOOL "" FORCE)
 set(NO_WEBSOCKET OFF CACHE BOOL "" FORCE)
 set(NO_MEDIA OFF CACHE BOOL "" FORCE)
 set(USE_SYSTEM_JSON ON CACHE BOOL "" FORCE)
+# libSRTP: no test programs, and do not promote its warnings to errors on compilers we do not control.
+set(LIBSRTP_TEST_APPS OFF CACHE BOOL "" FORCE)
+set(BUILD_WITH_WARNINGS OFF CACHE BOOL "" FORCE)
 
 if(WIN32 OR APPLE)
   # obs-deps ships Mbed TLS but not OpenSSL.

@@ -1,3 +1,21 @@
+/*
+Quick Cast - remote guests for OBS Studio
+Copyright (C) 2026 Voidscape Development
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>
+*/
+
 #include "util/crypto.hpp"
 #include "vdo/messages.hpp"
 
@@ -16,8 +34,7 @@ TEST(Crypto, AesCbcKnownVector)
 {
 	// NIST SP 800-38A F.2.5 (CBC-AES256.Encrypt), first block.
 	crypto::Sha256Digest key{};
-	const auto keyBytes =
-		*crypto::fromHex("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
+	const auto keyBytes = *crypto::fromHex("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
 	std::copy(keyBytes.begin(), keyBytes.end(), key.begin());
 	crypto::AesIv iv{};
 	const auto ivBytes = *crypto::fromHex("000102030405060708090a0b0c0d0e0f");

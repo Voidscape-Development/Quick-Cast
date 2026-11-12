@@ -1,3 +1,21 @@
+/*
+Quick Cast - remote guests for OBS Studio
+Copyright (C) 2026 Voidscape Development
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>
+*/
+
 #include "media-receiver.hpp"
 
 #include <chrono>
@@ -59,7 +77,9 @@ void MediaReceiver::incoming(rtc::message_vector &messages, const rtc::message_c
 
 	{
 		std::lock_guard<std::mutex> lock(mutex_);
-		const auto sendRtcp = [&](std::vector<uint8_t> &&packet) { rtcpOut.push_back(std::move(packet)); };
+		const auto sendRtcp = [&](std::vector<uint8_t> &&packet) {
+			rtcpOut.push_back(std::move(packet));
+		};
 
 		for (const rtc::message_ptr &message : messages) {
 			if (!message || message->empty())
@@ -88,11 +108,11 @@ void MediaReceiver::incoming(rtc::message_vector &messages, const rtc::message_c
 						depacketizer_->push(packet, [&](rtp::EncodedFrame &&frame) {
 							VideoOutput output;
 							output.timestampNs =
-								config_.clock ? config_.clock->toLocalNs(
-											kind, frame.rtpTimestamp,
-											frame.arrivalUs)
-									      : static_cast<uint64_t>(frame.arrivalUs) *
-											1000;
+								config_.clock
+									? config_.clock->toLocalNs(kind,
+												   frame.rtpTimestamp,
+												   frame.arrivalUs)
+									: static_cast<uint64_t>(frame.arrivalUs) * 1000;
 							output.frame = std::move(frame);
 							videoOut.push_back(std::move(output));
 						});
@@ -137,7 +157,8 @@ bool MediaReceiver::requestKeyframe(const rtc::message_callback &send)
 	std::vector<uint8_t> packet;
 	{
 		std::lock_guard<std::mutex> lock(mutex_);
-		stream_.requestKeyframe(monotonicNowUs(), [&](std::vector<uint8_t> &&bytes) { packet = std::move(bytes); });
+		stream_.requestKeyframe(monotonicNowUs(),
+					[&](std::vector<uint8_t> &&bytes) { packet = std::move(bytes); });
 	}
 	if (packet.empty())
 		return false;

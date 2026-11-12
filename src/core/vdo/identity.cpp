@@ -1,3 +1,21 @@
+/*
+Quick Cast - remote guests for OBS Studio
+Copyright (C) 2026 Voidscape Development
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>
+*/
+
 #include "identity.hpp"
 
 #include <algorithm>
@@ -129,14 +147,16 @@ std::string generateSessionId()
 
 std::string generateRoomName()
 {
-	static const std::array<const char *, 24> adjectives = {
-		"amber", "bold",  "calm",  "clever", "cosmic", "crisp",  "dawn",  "eager",
-		"fresh", "gold",  "happy", "ivory",  "jolly",  "keen",   "lucky", "mellow",
-		"noble", "quick", "royal", "silver", "sunny",  "swift",  "vivid", "witty"};
-	static const std::array<const char *, 24> nouns = {
-		"badger", "comet",  "falcon", "forest", "harbor", "heron",  "island", "lantern",
-		"maple",  "meadow", "otter",  "panda",  "pebble", "phoenix", "piano",  "river",
-		"rocket", "signal", "sparrow", "studio", "summit", "tiger",  "voyage", "willow"};
+	static const std::array<const char *, 24> adjectives = {"amber",  "bold",  "calm",  "clever", "cosmic",
+								"crisp",  "dawn",  "eager", "fresh",  "gold",
+								"happy",  "ivory", "jolly", "keen",   "lucky",
+								"mellow", "noble", "quick", "royal",  "silver",
+								"sunny",  "swift", "vivid", "witty"};
+	static const std::array<const char *, 24> nouns = {"badger", "comet",  "falcon",  "forest",  "harbor",
+							   "heron",  "island", "lantern", "maple",   "meadow",
+							   "otter",  "panda",  "pebble",  "phoenix", "piano",
+							   "river",  "rocket", "signal",  "sparrow", "studio",
+							   "summit", "tiger",  "voyage",  "willow"};
 
 	std::random_device device;
 	std::uniform_int_distribution<size_t> pickAdjective(0, adjectives.size() - 1);
