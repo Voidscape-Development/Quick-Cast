@@ -47,6 +47,11 @@ struct Settings {
 	bool returnFeedEnabled = true;
 	/** OBS audio track (1-6) guests hear. Guest sources are kept out of this track to avoid echo. */
 	int returnAudioTrack = 6;
+	/**
+	 * Name of the OBS source or scene guests see (typically the host's camera). Empty means the program output,
+	 * i.e. exactly what the audience sees.
+	 */
+	std::string returnVideoSource;
 	uint32_t returnHeight = 720;
 	uint32_t returnVideoBitrateKbps = 1500;
 	uint32_t returnAudioBitrateKbps = 96;

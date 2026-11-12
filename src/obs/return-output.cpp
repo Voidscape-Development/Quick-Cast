@@ -161,6 +161,18 @@ void ReturnFeed::release()
 	output_ = nullptr;
 	videoEncoder_ = nullptr;
 	audioEncoder_ = nullptr;
+	// The view's video output must outlive the encoder that reads from it.
+	releaseView();
+}
+
+void ReturnFeed::releaseView()
+{
+	if (!view_)
+		return;
+	obs_view_remove(view_);
+	obs_view_set_source(view_, 0, nullptr);
+	obs_view_destroy(view_);
+	view_ = nullptr;
 }
 
 bool ReturnFeed::active() const
@@ -178,15 +190,69 @@ void ReturnFeed::configure(const Settings &settings)
 		start();
 }
 
+bool ReturnFeed::prepareSourceView(const obs_video_info &mainVideo, video_t *&videoOutput, uint32_t &width,
+				   uint32_t &height)
+{
+	if (settings_.returnVideoSource.empty())
+		return false;
+
+	OBSSourceAutoRelease source = obs_get_source_by_name(settings_.returnVideoSource.c_str());
+	if (!source) {
+		blog(LOG_WARNING, "[quick-cast] return feed source '%s' not found; sending the program instead",
+		     settings_.returnVideoSource.c_str());
+		return false;
+	}
+
+	// A camera that has not delivered a frame yet reports no size; use the canvas until it does.
+	uint32_t sourceWidth = obs_source_get_width(source);
+	uint32_t sourceHeight = obs_source_get_height(source);
+	if (sourceWidth == 0 || sourceHeight == 0) {
+		sourceWidth = mainVideo.base_width;
+		sourceHeight = mainVideo.base_height;
+	}
+
+	obs_video_info viewVideo = mainVideo;
+	viewVideo.base_width = sourceWidth;
+	viewVideo.base_height = sourceHeight;
+	viewVideo.output_width = evenSize(sourceWidth);
+	viewVideo.output_height = evenSize(sourceHeight);
+	if (settings_.returnHeight > 0 && settings_.returnHeight < sourceHeight) {
+		viewVideo.output_width =
+			evenSize(static_cast<double>(sourceWidth) * settings_.returnHeight / sourceHeight);
+		viewVideo.output_height = evenSize(settings_.returnHeight);
+	}
+
+	view_ = obs_view_create();
+	obs_view_set_source(view_, 0, source);
+	video_t *viewOutput = obs_view_add2(view_, &viewVideo);
+	if (!viewOutput) {
+		blog(LOG_WARNING, "[quick-cast] could not render '%s' for the return feed; sending the program instead",
+		     settings_.returnVideoSource.c_str());
+		releaseView();
+		return false;
+	}
+
+	videoOutput = viewOutput;
+	width = viewVideo.output_width;
+	height = viewVideo.output_height;
+	return true;
+}
+
 bool ReturnFeed::createObjects()
 {
 	obs_video_info video = {};
 	if (!obs_get_video_info(&video) || video.output_height == 0)
 		return false;
 
-	uint32_t width = video.output_width;
-	uint32_t height = video.output_height;
-	if (settings_.returnHeight > 0 && settings_.returnHeight < height) {
+	// What guests see: the program by default, or one chosen source (usually the host's camera) rendered on its
+	// own so the host can show their face to a co-streamer whatever is on the program.
+	video_t *videoOutput = obs_get_video();
+	uint32_t nativeWidth = video.output_width;
+	uint32_t nativeHeight = video.output_height;
+	uint32_t width = nativeWidth;
+	uint32_t height = nativeHeight;
+	const bool customSource = prepareSourceView(video, videoOutput, width, height);
+	if (!customSource && settings_.returnHeight > 0 && settings_.returnHeight < height) {
 		width = evenSize(static_cast<double>(width) * settings_.returnHeight / height);
 		height = evenSize(settings_.returnHeight);
 	}
@@ -208,8 +274,9 @@ bool ReturnFeed::createObjects()
 		blog(LOG_ERROR, "[quick-cast] could not create the return feed video encoder (x264)");
 		return false;
 	}
-	obs_encoder_set_video(videoEncoder_, obs_get_video());
-	if (width != video.output_width || height != video.output_height)
+	obs_encoder_set_video(videoEncoder_, videoOutput);
+	// A source view already renders at the return feed's size; only the program needs scaling by the encoder.
+	if (!customSource && (width != nativeWidth || height != nativeHeight))
 		obs_encoder_set_scaled_size(videoEncoder_, width, height);
 
 	OBSDataAutoRelease audioSettings = obs_data_create();
@@ -257,7 +324,8 @@ void ReturnFeed::start()
 		blog(LOG_ERROR, "[quick-cast] could not start the return feed: %s", error ? error : "unknown error");
 		return;
 	}
-	blog(LOG_INFO, "[quick-cast] return feed started (audio track %d)", settings_.returnAudioTrack);
+	blog(LOG_INFO, "[quick-cast] return feed started (video: %s, audio track %d)",
+	     view_ ? settings_.returnVideoSource.c_str() : "program", settings_.returnAudioTrack);
 }
 
 void ReturnFeed::stop()

@@ -55,9 +55,16 @@ private:
 	GuestService *service_;
 	Settings settings_;
 	bool wanted_ = false;
+	void releaseView();
+	/** Sets up a private render of the configured source. Returns false when the program should be used. */
+	bool prepareSourceView(const obs_video_info &mainVideo, video_t *&videoOutput, uint32_t &width,
+			       uint32_t &height);
+
 	OBSOutputAutoRelease output_;
 	OBSEncoderAutoRelease videoEncoder_;
 	OBSEncoderAutoRelease audioEncoder_;
+	/** Private render of a single source, used when guests should see something other than the program. */
+	obs_view_t *view_ = nullptr;
 };
 
 } // namespace qc

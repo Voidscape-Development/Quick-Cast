@@ -51,6 +51,7 @@ private:
 	QCheckBox *fitToCanvas_;
 
 	QCheckBox *returnEnabled_;
+	QComboBox *returnVideo_;
 	QComboBox *returnTrack_;
 	QComboBox *returnResolution_;
 	QSpinBox *returnBitrate_;

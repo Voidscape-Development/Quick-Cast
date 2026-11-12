@@ -102,6 +102,7 @@ Settings loadSettings()
 		settings.returnFeedEnabled = obs_data_get_bool(data, "return_feed_enabled");
 		settings.returnAudioTrack =
 			static_cast<int>(std::clamp<long long>(obs_data_get_int(data, "return_audio_track"), 1, 6));
+		settings.returnVideoSource = getString(data, "return_video_source");
 		settings.returnHeight = static_cast<uint32_t>(
 			std::clamp<long long>(obs_data_get_int(data, "return_height"), 180, 1080));
 		settings.returnVideoBitrateKbps = static_cast<uint32_t>(
@@ -152,6 +153,7 @@ void saveSettings(const Settings &settings)
 	obs_data_set_string(data, "preferred_codec", settings.preferredCodec == VideoCodec::VP8 ? "vp8" : "h264");
 	obs_data_set_bool(data, "return_feed_enabled", settings.returnFeedEnabled);
 	obs_data_set_int(data, "return_audio_track", settings.returnAudioTrack);
+	obs_data_set_string(data, "return_video_source", settings.returnVideoSource.c_str());
 	obs_data_set_int(data, "return_height", settings.returnHeight);
 	obs_data_set_int(data, "return_video_bitrate_kbps", settings.returnVideoBitrateKbps);
 	obs_data_set_int(data, "return_audio_bitrate_kbps", settings.returnAudioBitrateKbps);

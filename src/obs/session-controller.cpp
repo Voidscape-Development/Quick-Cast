@@ -146,6 +146,7 @@ void SessionController::applySettings(const Settings &settings)
 		settings.turnUsername != settings_.turnUsername || settings.turnPassword != settings_.turnPassword;
 	const bool returnChanged = settings.returnAudioTrack != settings_.returnAudioTrack ||
 				   settings.returnHeight != settings_.returnHeight ||
+				   settings.returnVideoSource != settings_.returnVideoSource ||
 				   settings.returnVideoBitrateKbps != settings_.returnVideoBitrateKbps ||
 				   settings.returnAudioBitrateKbps != settings_.returnAudioBitrateKbps ||
 				   settings.returnFeedEnabled != settings_.returnFeedEnabled;

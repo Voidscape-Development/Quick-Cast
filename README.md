@@ -34,6 +34,8 @@ Other things the dock can do:
 While at least one guest is connected, Quick Cast sends them your program output and one OBS audio track so they can
 follow the show. Two things to know:
 
+- Guests see your **program output** by default. Under Settings → Return feed → *Guests see* you can pick any
+  source or scene instead, for example your camera, so a co-streamer sees your face whatever is on the program.
 - Guests hear **audio track 6** by default (configurable). Quick Cast automatically removes guest sources from that
   track, so nobody hears a delayed echo of themselves. Guests hear each other directly, peer to peer.
 - The return feed has its own lightweight encoder (x264 720p, 1.5 Mbps by default), separate from your stream and
@@ -48,7 +50,7 @@ follow the show. Two things to know:
 | --- | --- |
 | Show | Your display name, the show name and password that every invite link is built from, a button to generate new ones if a link leaks, and "start the show when OBS starts". |
 | Guests | Video quality requested from guests (1.5 to 8 Mbps), preferred codec (H.264 or VP8), and whether new guests are fitted to the canvas. |
-| Return feed | On/off, audio track, resolution, and bitrate. |
+| Return feed | On/off, what guests see (program or a chosen source such as your camera), audio track, resolution, and bitrate. |
 | Network | An optional TURN relay for networks that block direct connections. |
 
 Settings are stored in the plugin's config directory (`plugin_config/quick-cast/settings.json`) and are shared by all

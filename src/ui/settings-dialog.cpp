@@ -18,8 +18,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "settings-dialog.hpp"
 
+#include "obs/scene-integration.hpp"
 #include "ui-helpers.hpp"
 #include "vdo/identity.hpp"
+
+#include <obs.h>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -34,6 +37,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
+#include <cstring>
+
 namespace qc {
 
 namespace {
@@ -44,6 +49,37 @@ QLabel *hint(const QString &text, QWidget *parent)
 	label->setWordWrap(true);
 	label->setEnabled(false);
 	return label;
+}
+
+/** Sources first, then scenes: everything that produces video, excluding the guests themselves. */
+QStringList videoSourceNames()
+{
+	QStringList scenes;
+	QStringList sources;
+	struct Lists {
+		QStringList *scenes;
+		QStringList *sources;
+	} lists{&scenes, &sources};
+
+	const auto collect = [](void *param, obs_source_t *source) {
+		auto *out = static_cast<Lists *>(param);
+		const char *name = obs_source_get_name(source);
+		if (!name || !*name || (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) == 0)
+			return true;
+		const char *id = obs_source_get_unversioned_id(source);
+		if (id && strcmp(id, kGuestSourceId) == 0)
+			return true;
+		if (obs_source_get_type(source) == OBS_SOURCE_TYPE_SCENE)
+			out->scenes->append(QString::fromUtf8(name));
+		else
+			out->sources->append(QString::fromUtf8(name));
+		return true;
+	};
+	obs_enum_scenes(collect, &lists);
+	obs_enum_sources(collect, &lists);
+	scenes.sort(Qt::CaseInsensitive);
+	sources.sort(Qt::CaseInsensitive);
+	return sources + scenes;
 }
 
 void selectData(QComboBox *combo, int value)
@@ -107,6 +143,20 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	auto *returnForm = new QFormLayout(returnGroup);
 	returnEnabled_ = new QCheckBox(tr_("Settings.Return.Enable"), returnGroup);
 	returnEnabled_->setChecked(settings.returnFeedEnabled);
+	returnVideo_ = new QComboBox(returnGroup);
+	returnVideo_->addItem(tr_("Settings.Return.Video.Program"), QString());
+	for (const QString &name : videoSourceNames())
+		returnVideo_->addItem(name, name);
+	{
+		// Keep a configured source selectable even if it is not in the current scene collection.
+		const QString current = QString::fromStdString(settings.returnVideoSource);
+		int index = returnVideo_->findData(current);
+		if (index < 0) {
+			returnVideo_->addItem(current, current);
+			index = returnVideo_->count() - 1;
+		}
+		returnVideo_->setCurrentIndex(index);
+	}
 	returnTrack_ = new QComboBox(returnGroup);
 	for (int track = 1; track <= 6; ++track)
 		returnTrack_->addItem(tr_("Settings.Return.TrackN").arg(track), track);
@@ -123,6 +173,8 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	returnBitrate_->setSuffix(QStringLiteral(" kbps"));
 	returnBitrate_->setValue(static_cast<int>(settings.returnVideoBitrateKbps));
 	returnForm->addRow(QString(), returnEnabled_);
+	returnForm->addRow(tr_("Settings.Return.Video"), returnVideo_);
+	returnForm->addRow(hint(tr_("Settings.Return.VideoHint"), returnGroup));
 	returnForm->addRow(tr_("Settings.Return.Track"), returnTrack_);
 	returnForm->addRow(hint(tr_("Settings.Return.TrackHint"), returnGroup));
 	returnForm->addRow(tr_("Settings.Return.Resolution"), returnResolution_);
@@ -130,6 +182,7 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 
 	const auto syncReturnControls = [this] {
 		const bool enabled = returnEnabled_->isChecked();
+		returnVideo_->setEnabled(enabled);
 		returnTrack_->setEnabled(enabled);
 		returnResolution_->setEnabled(enabled);
 		returnBitrate_->setEnabled(enabled);
@@ -204,6 +257,7 @@ void SettingsDialog::save()
 	settings.fitToCanvas = fitToCanvas_->isChecked();
 
 	settings.returnFeedEnabled = returnEnabled_->isChecked();
+	settings.returnVideoSource = returnVideo_->currentData().toString().toStdString();
 	settings.returnAudioTrack = returnTrack_->currentData().toInt();
 	settings.returnHeight = static_cast<uint32_t>(returnResolution_->currentData().toInt());
 	settings.returnVideoBitrateKbps = static_cast<uint32_t>(returnBitrate_->value());
