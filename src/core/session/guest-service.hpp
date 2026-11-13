@@ -52,7 +52,7 @@ enum class GuestConnection {
 	Connected,
 };
 
-enum class VideoCodec { H264, VP8 };
+enum class VideoCodec { H264, VP8, VP9 };
 
 /** A seat in the show. Seats are created by the host and persist; a guest occupies one via their invite link. */
 struct GuestSeat {
@@ -83,7 +83,7 @@ struct GuestMediaStats {
 
 struct EncodedVideoFrame {
 	VideoCodec codec = VideoCodec::H264;
-	/** H.264: Annex-B access unit. VP8: one frame. */
+	/** H.264: Annex-B access unit. VP8/VP9: one frame. */
 	std::vector<uint8_t> data;
 	/** Presentation time on the local monotonic clock, shared with the guest's audio. */
 	uint64_t timestampNs = 0;

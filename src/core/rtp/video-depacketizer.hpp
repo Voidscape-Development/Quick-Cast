@@ -27,13 +27,21 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 namespace qc::rtp {
 
-enum class VideoCodec { H264, VP8 };
+/**
+ * Codecs the receive path can reassemble.
+ *
+ * Future work: AV1. It needs its own depacketizer (OBU aggregation and fragmentation per the AV1 RTP payload
+ * specification, including dependency-descriptor handling) and a decoder story: FFmpeg's built-in AV1 decoder is
+ * hardware-only, so software playback would depend on libdav1d being present in the FFmpeg OBS ships. Once both
+ * exist it slots in here, in chooseVideoCodec() and in VideoDecoder the same way VP9 does.
+ */
+enum class VideoCodec { H264, VP8, VP9 };
 
 const char *toString(VideoCodec codec);
 
 /** One complete coded picture, ready for a decoder. */
 struct EncodedFrame {
-	/** H.264: Annex-B byte stream (start-code prefixed NAL units). VP8: raw frame. */
+	/** H.264: Annex-B byte stream (start-code prefixed NAL units). VP8/VP9: raw frame. */
 	std::vector<uint8_t> data;
 	uint32_t rtpTimestamp = 0;
 	int64_t arrivalUs = 0;
@@ -99,6 +107,25 @@ private:
 	uint32_t timestamp_ = 0;
 	int64_t arrivalUs_ = 0;
 	bool frameOpen_ = false;
+	bool waitingForKeyframe_ = true;
+};
+
+/** VP9 (RFC 9628). Layers of one picture are concatenated into a single superframe-style buffer. */
+class Vp9Depacketizer final : public VideoDepacketizer {
+public:
+	VideoCodec codec() const override { return VideoCodec::VP9; }
+	void push(const Packet &packet, const FrameSink &onFrame) override;
+	void notifyLoss() override;
+	bool needsKeyframe() const override { return waitingForKeyframe_; }
+
+private:
+	void discard();
+
+	std::vector<uint8_t> frame_;
+	uint32_t timestamp_ = 0;
+	int64_t arrivalUs_ = 0;
+	bool frameOpen_ = false;
+	bool frameIsKey_ = false;
 	bool waitingForKeyframe_ = true;
 };
 

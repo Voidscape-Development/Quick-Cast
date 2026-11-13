@@ -56,6 +56,9 @@ public:
 	void onAudioPacket(EncodedAudioPacket &&packet) override;
 	void onMediaStopped() override;
 
+	/** Takes effect from the next keyframe; safe to call from any thread. */
+	void setHardwareDecoding(bool enabled) { hardwareDecoding_ = enabled; }
+
 	uint32_t width() const { return width_.load(); }
 	uint32_t height() const { return height_.load(); }
 
@@ -80,6 +83,7 @@ private:
 	bool dropUntilKeyframe_ = false;
 	bool stopping_ = false;
 
+	std::atomic<bool> hardwareDecoding_{true};
 	std::atomic<uint32_t> width_{0};
 	std::atomic<uint32_t> height_{0};
 

@@ -55,6 +55,11 @@ bool toObsVideoFormat(int avFormat, video_format &format, bool &fullRange)
 		format = VIDEO_FORMAT_NV12;
 		fullRange = false;
 		return true;
+	case AV_PIX_FMT_P010:
+		// 10-bit output of hardware decoders
+		format = VIDEO_FORMAT_P010;
+		fullRange = false;
+		return true;
 	case AV_PIX_FMT_YUV422P:
 		format = VIDEO_FORMAT_I422;
 		fullRange = false;
@@ -289,6 +294,7 @@ void GuestPlayer::run()
 		}
 
 		if (auto *video = std::get_if<EncodedVideoFrame>(&item)) {
+			videoDecoder.setHardwareAllowed(hardwareDecoding_.load());
 			if (!videoDecoder.decode(*video, outputVideo) && requestKeyframe_)
 				requestKeyframe_();
 		} else if (auto *audio = std::get_if<EncodedAudioPacket>(&item)) {

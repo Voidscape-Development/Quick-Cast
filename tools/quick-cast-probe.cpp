@@ -201,6 +201,8 @@ int main(int argc, char **argv)
 			config.returnFeedEnabled = false;
 		else if (arg == "--vp8")
 			config.defaultQuality.preferredCodec = VideoCodec::VP8;
+		else if (arg == "--vp9")
+			config.defaultQuality.preferredCodec = VideoCodec::VP9;
 		else if (arg == "--bitrate")
 			config.defaultQuality.maxVideoBitrateKbps = static_cast<uint32_t>(std::stoi(next()));
 		else if (arg == "--verbose")

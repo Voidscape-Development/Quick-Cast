@@ -27,6 +27,8 @@ const char *toString(VideoCodec codec)
 		return "H264";
 	case VideoCodec::VP8:
 		return "VP8";
+	case VideoCodec::VP9:
+		return "VP9";
 	}
 	return "unknown";
 }
@@ -38,6 +40,8 @@ std::unique_ptr<VideoDepacketizer> VideoDepacketizer::create(VideoCodec codec)
 		return std::make_unique<H264Depacketizer>();
 	case VideoCodec::VP8:
 		return std::make_unique<Vp8Depacketizer>();
+	case VideoCodec::VP9:
+		return std::make_unique<Vp9Depacketizer>();
 	}
 	return nullptr;
 }
@@ -248,6 +252,137 @@ void Vp8Depacketizer::push(const Packet &packet, const FrameSink &onFrame)
 			frame.rtpTimestamp = timestamp_;
 			frame.arrivalUs = arrivalUs_;
 			frame.keyframe = keyframe;
+			onFrame(std::move(frame));
+		}
+		discard();
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// VP9 (RFC 9628)
+// ---------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+/**
+ * Length of the VP9 payload descriptor, or 0 when it is malformed. `start`, `inter` and `baseLayer` report the B
+ * bit, the P bit and whether the packet belongs to spatial layer 0.
+ */
+size_t parseVp9Descriptor(const uint8_t *data, size_t size, bool &start, bool &inter, bool &baseLayer)
+{
+	if (size < 1)
+		return 0;
+	const uint8_t first = data[0];
+	const bool hasPictureId = (first & 0x80) != 0;
+	inter = (first & 0x40) != 0;
+	const bool hasLayers = (first & 0x20) != 0;
+	const bool flexible = (first & 0x10) != 0;
+	start = (first & 0x08) != 0;
+	const bool hasStructure = (first & 0x02) != 0;
+	baseLayer = true;
+
+	size_t offset = 1;
+	if (hasPictureId) {
+		if (offset >= size)
+			return 0;
+		offset += (data[offset] & 0x80) ? 2 : 1;
+	}
+	if (hasLayers) {
+		if (offset >= size)
+			return 0;
+		baseLayer = ((data[offset] >> 1) & 0x07) == 0;
+		offset += 1;
+		if (!flexible)
+			offset += 1; // TL0PICIDX
+	}
+	if (flexible && inter) {
+		// Up to three reference indices, each flagging whether another follows.
+		for (int i = 0; i < 3; ++i) {
+			if (offset >= size)
+				return 0;
+			const bool more = (data[offset] & 0x01) != 0;
+			offset += 1;
+			if (!more)
+				break;
+		}
+	}
+	if (hasStructure) {
+		if (offset >= size)
+			return 0;
+		const uint8_t header = data[offset++];
+		const size_t spatialLayers = static_cast<size_t>(header >> 5) + 1;
+		if (header & 0x10) // Y: a width/height pair per spatial layer
+			offset += spatialLayers * 4;
+		if (header & 0x08) { // G: picture group description
+			if (offset >= size)
+				return 0;
+			const size_t pictures = data[offset++];
+			for (size_t i = 0; i < pictures; ++i) {
+				if (offset >= size)
+					return 0;
+				const size_t references = (data[offset++] >> 2) & 0x03;
+				offset += references;
+			}
+		}
+	}
+	return offset <= size ? offset : 0;
+}
+
+} // namespace
+
+void Vp9Depacketizer::discard()
+{
+	frame_.clear();
+	frameOpen_ = false;
+	frameIsKey_ = false;
+}
+
+void Vp9Depacketizer::notifyLoss()
+{
+	discard();
+	waitingForKeyframe_ = true;
+}
+
+void Vp9Depacketizer::push(const Packet &packet, const FrameSink &onFrame)
+{
+	bool start = false;
+	bool inter = false;
+	bool baseLayer = true;
+	const size_t offset = parseVp9Descriptor(packet.payload.data(), packet.payload.size(), start, inter, baseLayer);
+	if (offset == 0 || offset >= packet.payload.size())
+		return;
+
+	const bool newPicture = !frameOpen_ || packet.timestamp != timestamp_;
+	if (newPicture) {
+		// The previous picture never saw its marker: its tail was lost.
+		if (frameOpen_)
+			waitingForKeyframe_ = true;
+		if (!start) {
+			// Joined mid-picture.
+			discard();
+			waitingForKeyframe_ = true;
+			return;
+		}
+		frame_.clear();
+		frameOpen_ = true;
+		// A picture is a keyframe when its base layer starts without inter prediction.
+		frameIsKey_ = baseLayer && !inter;
+		timestamp_ = packet.timestamp;
+		arrivalUs_ = packet.arrivalUs;
+	}
+
+	frame_.insert(frame_.end(), packet.payload.begin() + static_cast<std::ptrdiff_t>(offset), packet.payload.end());
+
+	// The RTP marker closes the picture (the last packet of its highest layer).
+	if (packet.marker) {
+		if (frameIsKey_)
+			waitingForKeyframe_ = false;
+		if (!waitingForKeyframe_ && onFrame) {
+			EncodedFrame frame;
+			frame.data = std::move(frame_);
+			frame.rtpTimestamp = timestamp_;
+			frame.arrivalUs = arrivalUs_;
+			frame.keyframe = frameIsKey_;
 			onFrame(std::move(frame));
 		}
 		discard();

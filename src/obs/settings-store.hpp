@@ -42,6 +42,8 @@ struct Settings {
 	// Guest video
 	uint32_t guestBitrateKbps = 4000;
 	VideoCodec preferredCodec = VideoCodec::H264;
+	/** Decode guest video on the GPU when it can; falls back to software by itself. */
+	bool hardwareDecoding = true;
 
 	// Return feed
 	bool returnFeedEnabled = true;

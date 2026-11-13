@@ -46,6 +46,28 @@ std::string getString(obs_data_t *data, const char *key, const std::string &fall
 	return value && *value ? std::string(value) : fallback;
 }
 
+VideoCodec codecFromName(const std::string &name)
+{
+	if (name == "vp8")
+		return VideoCodec::VP8;
+	if (name == "vp9")
+		return VideoCodec::VP9;
+	return VideoCodec::H264;
+}
+
+const char *codecName(VideoCodec codec)
+{
+	switch (codec) {
+	case VideoCodec::VP8:
+		return "vp8";
+	case VideoCodec::VP9:
+		return "vp9";
+	case VideoCodec::H264:
+		break;
+	}
+	return "h264";
+}
+
 } // namespace
 
 const GuestSeat *Settings::findSeat(const std::string &id) const
@@ -83,6 +105,7 @@ Settings loadSettings()
 	OBSDataAutoRelease data = obs_data_create_from_json_file_safe(configPath(kSettingsFile).c_str(), "bak");
 	if (data) {
 		obs_data_set_default_bool(data, "fit_to_canvas", settings.fitToCanvas);
+		obs_data_set_default_bool(data, "hardware_decoding", settings.hardwareDecoding);
 		obs_data_set_default_int(data, "guest_bitrate_kbps", settings.guestBitrateKbps);
 		obs_data_set_default_bool(data, "return_feed_enabled", settings.returnFeedEnabled);
 		obs_data_set_default_int(data, "return_audio_track", settings.returnAudioTrack);
@@ -98,8 +121,8 @@ Settings loadSettings()
 		settings.fitToCanvas = obs_data_get_bool(data, "fit_to_canvas");
 		settings.guestBitrateKbps = static_cast<uint32_t>(
 			std::clamp<long long>(obs_data_get_int(data, "guest_bitrate_kbps"), 300, 20000));
-		settings.preferredCodec = getString(data, "preferred_codec") == "vp8" ? VideoCodec::VP8
-										      : VideoCodec::H264;
+		settings.hardwareDecoding = obs_data_get_bool(data, "hardware_decoding");
+		settings.preferredCodec = codecFromName(getString(data, "preferred_codec"));
 		settings.returnFeedEnabled = obs_data_get_bool(data, "return_feed_enabled");
 		settings.returnAudioTrack =
 			static_cast<int>(std::clamp<long long>(obs_data_get_int(data, "return_audio_track"), 1, 6));
@@ -159,7 +182,8 @@ void saveSettings(const Settings &settings)
 	obs_data_set_bool(data, "dock_introduced", settings.dockIntroduced);
 	obs_data_set_bool(data, "fit_to_canvas", settings.fitToCanvas);
 	obs_data_set_int(data, "guest_bitrate_kbps", settings.guestBitrateKbps);
-	obs_data_set_string(data, "preferred_codec", settings.preferredCodec == VideoCodec::VP8 ? "vp8" : "h264");
+	obs_data_set_string(data, "preferred_codec", codecName(settings.preferredCodec));
+	obs_data_set_bool(data, "hardware_decoding", settings.hardwareDecoding);
 	obs_data_set_bool(data, "return_feed_enabled", settings.returnFeedEnabled);
 	obs_data_set_int(data, "return_audio_track", settings.returnAudioTrack);
 	obs_data_set_string(data, "return_video_source", settings.returnVideoSource.c_str());

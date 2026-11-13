@@ -43,12 +43,12 @@ struct SdpMediaSection {
 /** Extracts the media sections of an SDP offer. Tolerant of unknown lines; never throws. */
 std::vector<SdpMediaSection> parseSdpMedia(const std::string &sdp);
 
-enum class VideoCodecPreference { H264, VP8 };
+enum class VideoCodecPreference { H264, VP8, VP9 };
 
 /**
- * Picks the video codec to accept from an offered section: the preferred codec when offered, otherwise the other
- * supported one. For H.264 only packetization-mode=1 variants are considered, favouring constrained baseline since
- * every browser can encode it.
+ * Picks the video codec to accept from an offered section: the preferred codec when offered, otherwise H.264, then
+ * VP8, then VP9. For H.264 only packetization-mode=1 variants are considered, favouring constrained baseline since
+ * every browser can encode it. For VP9 only profile 0 (8-bit 4:2:0) is accepted.
  */
 std::optional<SdpCodec> chooseVideoCodec(const SdpMediaSection &section, VideoCodecPreference preference);
 

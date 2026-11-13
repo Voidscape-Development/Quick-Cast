@@ -225,7 +225,15 @@ Json relayedFrom(const Json &message, const std::string &senderUuid)
 
 VideoCodec toPublicCodec(rtp::VideoCodec codec)
 {
-	return codec == rtp::VideoCodec::VP8 ? VideoCodec::VP8 : VideoCodec::H264;
+	switch (codec) {
+	case rtp::VideoCodec::VP8:
+		return VideoCodec::VP8;
+	case rtp::VideoCodec::VP9:
+		return VideoCodec::VP9;
+	case rtp::VideoCodec::H264:
+		break;
+	}
+	return VideoCodec::H264;
 }
 
 } // namespace
@@ -956,8 +964,11 @@ public:
 
 	void addInboundVideo(const std::shared_ptr<InboundPeer> &peer, Seat &seat, const SdpMediaSection &section)
 	{
-		const auto preference = seat.quality.preferredCodec == VideoCodec::VP8 ? VideoCodecPreference::VP8
-										       : VideoCodecPreference::H264;
+		auto preference = VideoCodecPreference::H264;
+		if (seat.quality.preferredCodec == VideoCodec::VP8)
+			preference = VideoCodecPreference::VP8;
+		else if (seat.quality.preferredCodec == VideoCodec::VP9)
+			preference = VideoCodecPreference::VP9;
 		const auto codec = chooseVideoCodec(section, preference);
 		if (!codec) {
 			QC_LOG_WARN("guest '%s' offered no video codec we can decode", seat.seat.name.c_str());
@@ -968,20 +979,24 @@ public:
 		const bool use = section.remoteSends && !peer->haveVideoTrack;
 		rtc::Description::Video media(section.mid, use ? rtc::Description::Direction::RecvOnly
 							       : rtc::Description::Direction::Inactive);
-		const bool h264 = codec->name == "H264";
-		if (h264)
-			media.addH264Codec(codec->payloadType, codec->fmtp.empty()
-								       ? std::nullopt
-								       : std::optional<std::string>(codec->fmtp));
-		else
+		const std::optional<std::string> offeredFormat =
+			codec->fmtp.empty() ? std::nullopt : std::optional<std::string>(codec->fmtp);
+		rtp::VideoCodec rtpCodec = rtp::VideoCodec::H264;
+		if (codec->name == "H264") {
+			media.addH264Codec(codec->payloadType, offeredFormat);
+		} else if (codec->name == "VP9") {
+			rtpCodec = rtp::VideoCodec::VP9;
+			media.addVP9Codec(codec->payloadType, offeredFormat);
+		} else {
+			rtpCodec = rtp::VideoCodec::VP8;
 			media.addVP8Codec(codec->payloadType);
+		}
 
 		InboundTrack entry;
 		entry.video = true;
 		entry.track = peer->pc->addTrack(media);
 		if (use) {
 			peer->haveVideoTrack = true;
-			const rtp::VideoCodec rtpCodec = h264 ? rtp::VideoCodec::H264 : rtp::VideoCodec::VP8;
 
 			MediaReceiver::Config receiverConfig;
 			receiverConfig.video = true;

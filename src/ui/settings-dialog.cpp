@@ -129,13 +129,19 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	quality_->addItem(tr_("Settings.Quality.VeryHigh"), 8000);
 	selectData(quality_, static_cast<int>(settings.guestBitrateKbps));
 	codec_ = new QComboBox(guestGroup);
-	codec_->addItem(QStringLiteral("H.264"), 0);
-	codec_->addItem(QStringLiteral("VP8"), 1);
-	selectData(codec_, settings.preferredCodec == VideoCodec::VP8 ? 1 : 0);
+	codec_->addItem(QStringLiteral("H.264"), static_cast<int>(VideoCodec::H264));
+	codec_->addItem(QStringLiteral("VP8"), static_cast<int>(VideoCodec::VP8));
+	codec_->addItem(QStringLiteral("VP9"), static_cast<int>(VideoCodec::VP9));
+	selectData(codec_, static_cast<int>(settings.preferredCodec));
+	hardwareDecoding_ = new QCheckBox(tr_("Settings.HardwareDecoding"), guestGroup);
+	hardwareDecoding_->setChecked(settings.hardwareDecoding);
 	fitToCanvas_ = new QCheckBox(tr_("Settings.FitToCanvas"), guestGroup);
 	fitToCanvas_->setChecked(settings.fitToCanvas);
 	guestForm->addRow(tr_("Settings.Quality"), quality_);
 	guestForm->addRow(tr_("Settings.Codec"), codec_);
+	guestForm->addRow(hint(tr_("Settings.CodecHint"), guestGroup));
+	guestForm->addRow(QString(), hardwareDecoding_);
+	guestForm->addRow(hint(tr_("Settings.HardwareDecodingHint"), guestGroup));
 	guestForm->addRow(QString(), fitToCanvas_);
 
 	// --- Return feed ---
@@ -306,7 +312,8 @@ void SettingsDialog::save()
 	settings.startWithObs = startWithObs_->isChecked();
 
 	settings.guestBitrateKbps = static_cast<uint32_t>(quality_->currentData().toInt());
-	settings.preferredCodec = codec_->currentData().toInt() == 1 ? VideoCodec::VP8 : VideoCodec::H264;
+	settings.preferredCodec = static_cast<VideoCodec>(codec_->currentData().toInt());
+	settings.hardwareDecoding = hardwareDecoding_->isChecked();
 	settings.fitToCanvas = fitToCanvas_->isChecked();
 
 	settings.returnFeedEnabled = returnEnabled_->isChecked();

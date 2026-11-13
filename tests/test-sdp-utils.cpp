@@ -91,7 +91,7 @@ TEST(SdpUtils, FallsBackWhenPreferredCodecMissing)
 	ASSERT_TRUE(codec);
 	EXPECT_EQ(codec->name, "VP8");
 
-	const auto none = parseSdpMedia("m=video 9 UDP/TLS/RTP/SAVPF 98\r\na=mid:v\r\na=rtpmap:98 VP9/90000\r\n");
+	const auto none = parseSdpMedia("m=video 9 UDP/TLS/RTP/SAVPF 98\r\na=mid:v\r\na=rtpmap:98 AV1/90000\r\n");
 	EXPECT_FALSE(chooseVideoCodec(none[0], VideoCodecPreference::H264));
 }
 
@@ -112,4 +112,26 @@ TEST(SdpUtils, FmtpValueLookup)
 		  "1");
 	EXPECT_EQ(fmtpValue("a=1;b=2", "profile-level-id"), "");
 	EXPECT_EQ(fmtpValue("profile-level-id=42E01F", "PROFILE-LEVEL-ID"), "42e01f");
+}
+
+TEST(SdpUtils, Vp9OnlyWhenPreferredAndProfileZero)
+{
+	const auto sections = parseSdpMedia("m=video 9 UDP/TLS/RTP/SAVPF 96 98 100 102\r\na=mid:v\r\n"
+					    "a=rtpmap:96 VP8/90000\r\n"
+					    "a=rtpmap:100 VP9/90000\r\na=fmtp:100 profile-id=2\r\n"
+					    "a=rtpmap:98 VP9/90000\r\na=fmtp:98 profile-id=0\r\n"
+					    "a=rtpmap:102 H264/90000\r\n"
+					    "a=fmtp:102 packetization-mode=1;profile-level-id=42e01f\r\n");
+	ASSERT_EQ(sections.size(), 1u);
+
+	const auto vp9 = chooseVideoCodec(sections[0], VideoCodecPreference::VP9);
+	ASSERT_TRUE(vp9);
+	EXPECT_EQ(vp9->payloadType, 98) << "the 10-bit profile is not decodable into what OBS expects";
+
+	// VP9 is never picked over H.264 unless asked for.
+	EXPECT_EQ(chooseVideoCodec(sections[0], VideoCodecPreference::H264)->name, "H264");
+
+	const auto noVp9 = parseSdpMedia("m=video 9 UDP/TLS/RTP/SAVPF 96 102\r\na=mid:v\r\na=rtpmap:96 VP8/90000\r\n"
+					 "a=rtpmap:102 H264/90000\r\na=fmtp:102 packetization-mode=1\r\n");
+	EXPECT_EQ(chooseVideoCodec(noVp9[0], VideoCodecPreference::VP9)->name, "H264");
 }

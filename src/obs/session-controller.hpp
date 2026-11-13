@@ -130,6 +130,7 @@ private:
 	std::map<std::string, std::shared_ptr<GuestPlayer>> players_;
 	std::vector<GuestSeat> seatsSnapshot_;
 	int returnAudioTrack_ = 6;
+	std::atomic<bool> hardwareDecoding_{true};
 };
 
 } // namespace qc

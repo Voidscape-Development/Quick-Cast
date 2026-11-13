@@ -172,3 +172,76 @@ TEST(Vp8Depacketizer, WaitsForKeyframeAfterLoss)
 	depacketizer.push(makePacket({0x10, 0x10}, 3000, true), sink);
 	EXPECT_EQ(frames, 2);
 }
+
+TEST(Vp9Depacketizer, AssemblesKeyframeAndDeltaFrames)
+{
+	Vp9Depacketizer depacketizer;
+	std::vector<EncodedFrame> frames;
+	const auto sink = [&](EncodedFrame &&frame) {
+		frames.push_back(std::move(frame));
+	};
+	EXPECT_TRUE(depacketizer.needsKeyframe());
+
+	// Keyframe in two packets. First: I=1 (15-bit picture id), B=1, V=1 with a one-layer scalability structure
+	// carrying a resolution (Y=1) and no picture group.
+	depacketizer.push(makePacket({0x8A, 0x80, 0x01, 0x10, 0x05, 0x00, 0x02, 0xD0, 0xAA, 0xBB}, 1000, false), sink);
+	// Second: I=1, E=1.
+	depacketizer.push(makePacket({0x84, 0x80, 0x01, 0xCC}, 1000, true), sink);
+
+	ASSERT_EQ(frames.size(), 1u);
+	EXPECT_TRUE(frames[0].keyframe);
+	EXPECT_EQ(frames[0].rtpTimestamp, 1000u);
+	EXPECT_EQ(frames[0].data, (std::vector<uint8_t>{0xAA, 0xBB, 0xCC}));
+	EXPECT_FALSE(depacketizer.needsKeyframe());
+
+	// Inter frame in one packet: I=1, P=1, B=1, E=1 with a 7-bit picture id.
+	depacketizer.push(makePacket({0xCC, 0x02, 0xDD}, 4000, true), sink);
+	ASSERT_EQ(frames.size(), 2u);
+	EXPECT_FALSE(frames[1].keyframe);
+	EXPECT_EQ(frames[1].data, (std::vector<uint8_t>{0xDD}));
+}
+
+TEST(Vp9Depacketizer, FlexibleModeReferenceIndicesAreSkipped)
+{
+	Vp9Depacketizer depacketizer;
+	std::vector<EncodedFrame> frames;
+	const auto sink = [&](EncodedFrame &&frame) {
+		frames.push_back(std::move(frame));
+	};
+	depacketizer.push(makePacket({0x0C, 0x11}, 1000, true), sink); // keyframe, no optional fields
+	// I=1, P=1, L=1, F=1, B=1, E=1: picture id, layer byte (no TL0PICIDX in flexible mode), two P_DIFFs.
+	depacketizer.push(makePacket({0xFC, 0x05, 0x00, 0x03, 0x04, 0x77}, 4000, true), sink);
+	ASSERT_EQ(frames.size(), 2u);
+	EXPECT_EQ(frames[1].data, (std::vector<uint8_t>{0x77}));
+}
+
+TEST(Vp9Depacketizer, WaitsForKeyframeAfterLossAndIgnoresMidPictureJoin)
+{
+	Vp9Depacketizer depacketizer;
+	int frames = 0;
+	const auto sink = [&](EncodedFrame &&) {
+		++frames;
+	};
+
+	// Continuation of a picture whose start we never saw.
+	depacketizer.push(makePacket({0x04, 0x01}, 500, true), sink);
+	EXPECT_EQ(frames, 0);
+
+	depacketizer.push(makePacket({0x0C, 0x01}, 1000, true), sink); // keyframe
+	EXPECT_EQ(frames, 1);
+	depacketizer.notifyLoss();
+	depacketizer.push(makePacket({0x4C, 0x02}, 2000, true), sink); // inter frame depends on what was lost
+	EXPECT_EQ(frames, 1);
+	EXPECT_TRUE(depacketizer.needsKeyframe());
+	depacketizer.push(makePacket({0x0C, 0x03}, 3000, true), sink);
+	EXPECT_EQ(frames, 2);
+}
+
+TEST(Vp9Depacketizer, TruncatedDescriptorIsRejected)
+{
+	Vp9Depacketizer depacketizer;
+	int frames = 0;
+	// Claims a picture id and a scalability structure but the packet ends first.
+	depacketizer.push(makePacket({0x8A, 0x80}, 1000, true), [&](EncodedFrame &&) { ++frames; });
+	EXPECT_EQ(frames, 0);
+}

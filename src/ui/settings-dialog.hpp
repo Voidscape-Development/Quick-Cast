@@ -48,6 +48,7 @@ private:
 
 	QComboBox *quality_;
 	QComboBox *codec_;
+	QCheckBox *hardwareDecoding_;
 	QCheckBox *fitToCanvas_;
 
 	QCheckBox *returnEnabled_;

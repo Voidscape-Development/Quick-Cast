@@ -175,6 +175,7 @@ std::optional<SdpCodec> chooseVideoCodec(const SdpMediaSection &section, VideoCo
 	std::optional<SdpCodec> h264;
 	int h264Score = -1;
 	std::optional<SdpCodec> vp8;
+	std::optional<SdpCodec> vp9;
 
 	for (const SdpCodec &codec : section.codecs) {
 		if (codec.name == "H264") {
@@ -195,12 +196,30 @@ std::optional<SdpCodec> chooseVideoCodec(const SdpMediaSection &section, VideoCo
 			}
 		} else if (codec.name == "VP8" && !vp8) {
 			vp8 = codec;
+		} else if (codec.name == "VP9" && !vp9) {
+			const std::string profile = fmtpValue(codec.fmtp, "profile-id");
+			if (profile.empty() || profile == "0")
+				vp9 = codec;
 		}
 	}
 
-	if (preference == VideoCodecPreference::H264)
-		return h264 ? h264 : vp8;
-	return vp8 ? vp8 : h264;
+	std::optional<SdpCodec> preferred;
+	switch (preference) {
+	case VideoCodecPreference::H264:
+		preferred = h264;
+		break;
+	case VideoCodecPreference::VP8:
+		preferred = vp8;
+		break;
+	case VideoCodecPreference::VP9:
+		preferred = vp9;
+		break;
+	}
+	if (preferred)
+		return preferred;
+	if (h264)
+		return h264;
+	return vp8 ? vp8 : vp9;
 }
 
 std::optional<SdpCodec> chooseAudioCodec(const SdpMediaSection &section)

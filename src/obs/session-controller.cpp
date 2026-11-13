@@ -88,8 +88,11 @@ void SessionController::persist()
 
 void SessionController::publishSeats()
 {
+	hardwareDecoding_ = settings_.hardwareDecoding;
 	std::lock_guard<std::mutex> lock(sharedMutex_);
 	seatsSnapshot_ = settings_.seats;
+	for (auto &[id, player] : players_)
+		player->setHardwareDecoding(settings_.hardwareDecoding);
 	returnAudioTrack_ = settings_.returnAudioTrack;
 }
 
@@ -372,6 +375,7 @@ std::shared_ptr<GuestPlayer> SessionController::ensurePlayer(const std::string &
 
 		GuestService *service = service_.get();
 		player = std::make_shared<GuestPlayer>([service, guestId] { service->requestKeyframe(guestId); });
+		player->setHardwareDecoding(hardwareDecoding_.load());
 		players_.emplace(guestId, player);
 	}
 	service_->setMediaSink(guestId, player);

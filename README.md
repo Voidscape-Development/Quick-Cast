@@ -53,7 +53,7 @@ follow the show. Two things to know:
 | Tab | What is there |
 | --- | --- |
 | Show | Your display name, the show name and password that every invite link is built from, a button to generate new ones if a link leaks, and "start the show when OBS starts". |
-| Guests | Video quality requested from guests (1.5 to 8 Mbps), preferred codec (H.264 or VP8), and whether new guests are fitted to the canvas. |
+| Guests | Video quality requested from guests (1.5 to 8 Mbps), preferred codec (H.264, VP8 or VP9), hardware decoding, and whether new guests are fitted to the canvas. |
 | Return feed | On/off, the main feed and optional second feed (program or a chosen source such as your camera), audio track, resolution, and bitrate. |
 | Network | An optional TURN relay for networks that block direct connections. |
 
@@ -64,7 +64,10 @@ scene collections.
 
 - No TURN relay is configured out of the box. Guests' browsers bring VDO.Ninja's relays with them, which covers
   most networks, but a host behind a very restrictive firewall needs their own TURN server (Settings → Network).
-- Video is decoded in software (FFmpeg). H.264 and VP8 are supported; VP9 and AV1 are not accepted.
+- Guest video can be H.264, VP8 or VP9. AV1 is not accepted yet.
+- Hardware decoding (D3D11VA on Windows, VideoToolbox on macOS, VAAPI on Linux) is used when the graphics card
+  supports the codec, with an automatic switch to software decoding when it does not. VP8 is always decoded in
+  software. Decoded frames are copied back from the GPU rather than kept there.
 - Each of your two feeds runs its own encoder, and each is sent to every guest, so a second feed roughly doubles
   the return-feed CPU and upload cost.
 - One camera per guest. A guest who shares their screen from the web app appears as a second entry in the list.
