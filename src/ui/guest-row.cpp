@@ -49,114 +49,155 @@ GuestRow::GuestRow(SessionController *controller, const GuestView &guest, QWidge
 	  controller_(controller),
 	  guestId_(guest.seat.id)
 {
-	setObjectName(QStringLiteral("quickCastGuestRow"));
-	setFrameShape(QFrame::StyledPanel);
+	setObjectName(QStringLiteral("quickCastGuestCard"));
 
-	dot_ = new QLabel(this);
-	dot_->setFixedSize(10, 10);
+	avatar_ = new ui::Avatar(this);
 
-	nameLabel_ = new QLabel(this);
-	QFont nameFont = nameLabel_->font();
-	nameFont.setBold(true);
-	nameLabel_->setFont(nameFont);
-	nameLabel_->setTextInteractionFlags(Qt::NoTextInteraction);
+	nameLabel_ = new ui::ElidedLabel(this);
 
-	detailLabel_ = new QLabel(this);
-	detailLabel_->setWordWrap(true);
-	QFont detailFont = detailLabel_->font();
-	detailFont.setPointSizeF(detailFont.pointSizeF() * 0.9);
-	detailLabel_->setFont(detailFont);
-	detailLabel_->setEnabled(false); // themed "secondary text" colour
+	signal_ = new ui::SignalBars(this);
+	detailLabel_ = new ui::ElidedLabel(this);
+	flagsLabel_ = new QLabel(this);
+	flagsLabel_->setWordWrap(true);
 
+	linkButton_ = new QToolButton(this);
+	muteButton_ = new QToolButton(this);
 	menuButton_ = new QToolButton(this);
-	menuButton_->setText(QStringLiteral("⋯"));
-	menuButton_->setToolTip(tr_("Guest.More"));
-	menuButton_->setAccessibleName(tr_("Guest.More"));
 	menuButton_->setPopupMode(QToolButton::InstantPopup);
-	menuButton_->setAutoRaise(true);
 
 	auto *menu = new QMenu(menuButton_);
 	QAction *renameAction = menu->addAction(tr_("Guest.Rename"));
-	muteAction_ = menu->addAction(tr_("Guest.Mute"));
-	muteAction_->setCheckable(true);
 	refreshAction_ = menu->addAction(tr_("Guest.RefreshVideo"));
 	menu->addSeparator();
 	disconnectAction_ = menu->addAction(tr_("Guest.Disconnect"));
 	QAction *removeAction = menu->addAction(tr_("Guest.Remove"));
 	menuButton_->setMenu(menu);
 
-	linkButton_ = new QPushButton(tr_("Guest.CopyLink"), this);
-	linkButton_->setToolTip(tr_("Guest.CopyLink.Tooltip"));
 	sceneButton_ = new QPushButton(this);
-
-	// Docks are often narrow: the name gives way first, and the one wide button gets a row to itself.
-	nameLabel_->setMinimumWidth(40);
-	nameLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-	detailLabel_->setMinimumWidth(40);
 	sceneButton_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
 
-	auto *header = new QHBoxLayout();
-	header->setSpacing(8);
-	header->addWidget(dot_, 0, Qt::AlignVCenter);
-	header->addWidget(nameLabel_, 1);
-	header->addWidget(linkButton_, 0);
-	header->addWidget(menuButton_, 0);
+	// Name and quick actions share the first line; the status line runs the full width underneath so it has room
+	// even in a narrow dock.
+	auto *nameLine = new QHBoxLayout();
+	nameLine->setSpacing(6);
+	nameLine->addWidget(nameLabel_, 1);
+	nameLine->addWidget(muteButton_);
+	nameLine->addWidget(linkButton_);
+	nameLine->addWidget(menuButton_);
+
+	auto *statusLine = new QHBoxLayout();
+	statusLine->setSpacing(6);
+	statusLine->addWidget(signal_, 0, Qt::AlignVCenter);
+	statusLine->addWidget(detailLabel_, 1);
+
+	auto *identity = new QVBoxLayout();
+	identity->setSpacing(0);
+	identity->addLayout(nameLine);
+	identity->addLayout(statusLine);
+
+	auto *top = new QHBoxLayout();
+	top->setSpacing(10);
+	top->addWidget(avatar_, 0, Qt::AlignVCenter);
+	top->addLayout(identity, 1);
 
 	auto *layout = new QVBoxLayout(this);
-	layout->setContentsMargins(10, 8, 10, 10);
-	layout->setSpacing(6);
-	layout->addLayout(header);
-	layout->addWidget(detailLabel_);
+	layout->setContentsMargins(12, 10, 10, 12);
+	layout->setSpacing(10);
+	layout->addLayout(top);
+	layout->addWidget(flagsLabel_);
 	layout->addWidget(sceneButton_);
 
-	connect(linkButton_, &QPushButton::clicked, this, &GuestRow::copyLink);
+	connect(linkButton_, &QToolButton::clicked, this, &GuestRow::copyLink);
+	connect(muteButton_, &QToolButton::clicked, this, &GuestRow::toggleMute);
 	connect(sceneButton_, &QPushButton::clicked, this, &GuestRow::toggleScene);
 	connect(renameAction, &QAction::triggered, this, &GuestRow::rename);
 	connect(removeAction, &QAction::triggered, this, &GuestRow::remove);
-	connect(muteAction_, &QAction::triggered, this,
-		[this](bool checked) { controller_->setGuestMuted(guestId_, checked); });
 	connect(refreshAction_, &QAction::triggered, this, [this] { controller_->refreshGuestVideo(guestId_); });
 	connect(disconnectAction_, &QAction::triggered, this, [this] { controller_->disconnectGuest(guestId_); });
-	// Mute state can be changed from OBS' own mixer, so read it fresh each time the menu opens.
-	connect(menu, &QMenu::aboutToShow, this, [this] {
-		muteAction_->setChecked(controller_->isGuestMuted(guestId_));
-		muteAction_->setEnabled(inScene_ || controller_->isGuestMuted(guestId_));
-	});
 
+	restyle();
 	refresh(guest);
+}
+
+void GuestRow::restyle()
+{
+	const ui::Colors c = ui::colors(this);
+	ui::styleCard(this);
+	ui::styleHeading(nameLabel_, 1.05);
+	ui::styleMuted(detailLabel_);
+	ui::styleMuted(flagsLabel_);
+	flagsLabel_->setStyleSheet(flagsLabel_->styleSheet() + QStringLiteral(" color: %1;").arg(ui::css(c.warning)));
+	ui::styleIconButton(linkButton_, ui::Icon::Link, tr_("Guest.CopyLink.Tooltip"));
+	ui::styleIconButton(menuButton_, ui::Icon::More, tr_("Guest.More"));
+	sceneStateKnown_ = false;
+	applySceneState();
+}
+
+void GuestRow::applySceneState()
+{
+	const bool inScene = controller_->isGuestInCurrentScene(guestId_);
+	const bool muted = inScene && controller_->isGuestMuted(guestId_);
+	if (sceneStateKnown_ && inScene == inScene_ && muted == muted_ && connected_ == styledConnected_)
+		return;
+	sceneStateKnown_ = true;
+	styledConnected_ = connected_;
+	inScene_ = inScene;
+	muted_ = muted;
+
+	// "Add" becomes the call to action the moment a guest is connected and not yet on screen; otherwise the
+	// button stays quiet so the dock never shows a wall of emphasised buttons.
+	// A guest who is on screen gets a green outline: visible at a glance down the list, and backed up in words
+	// by the button, which now reads "Remove from scene".
+	const ui::Colors c = ui::colors(this);
+	ui::styleCard(this);
+	if (inScene_) {
+		setStyleSheet(
+			QStringLiteral("#%1 { background-color: %2; border: 1px solid %3; border-radius: 8px; }")
+				.arg(objectName(), ui::css(ui::tint(c.good, 0.07)), ui::css(ui::tint(c.good, 0.65))));
+	}
+	sceneButton_->setText(inScene_ ? tr_("Guest.RemoveFromScene") : tr_("Guest.AddToScene"));
+	sceneButton_->setToolTip(inScene_ ? tr_("Guest.RemoveFromScene.Tooltip") : tr_("Guest.AddToScene.Tooltip"));
+	const bool callToAction = !inScene_ && connected_;
+	ui::styleButton(sceneButton_, callToAction ? ui::ButtonKind::Primary : ui::ButtonKind::Secondary);
+	sceneButton_->setIcon(inScene_ ? QIcon() : ui::icon(ui::Icon::Plus, callToAction ? c.accentText : c.text));
+
+	// Muting only means something once the guest has a source in OBS.
+	muteButton_->setVisible(inScene_);
+	ui::styleIconButton(muteButton_, muted_ ? ui::Icon::SpeakerMuted : ui::Icon::Speaker,
+			    muted_ ? tr_("Guest.Unmute") : tr_("Guest.Mute"));
+	if (muted_)
+		muteButton_->setIcon(ui::icon(ui::Icon::SpeakerMuted, c.danger));
 }
 
 void GuestRow::refresh(const GuestView &guest)
 {
 	name_ = QString::fromStdString(guest.seat.name);
 	nameLabel_->setText(name_);
-	nameLabel_->setToolTip(name_);
+	avatar_->setName(name_);
 
 	const bool connected = guest.status.connection == GuestConnection::Connected;
 	const bool connecting = guest.status.connection == GuestConnection::Connecting;
+	connected_ = connected;
+	avatar_->setPresence(connected    ? ui::Avatar::Presence::Connected
+			     : connecting ? ui::Avatar::Presence::Connecting
+					  : ui::Avatar::Presence::Offline);
 
-	// Colour is never the only signal: the detail line always spells the state out.
-	const char *colour = connected ? "#2ecc71" : connecting ? "#f1c40f" : "#7f8c8d";
-	dot_->setStyleSheet(QStringLiteral("background-color: %1; border-radius: 5px;").arg(QLatin1String(colour)));
-
+	// The status line always says the state in words; the bars and the presence dot only reinforce it.
 	QStringList parts;
+	int signalLevel = 0;
 	if (connected) {
-		parts << tr_("Guest.State.Connected");
 		GuestMediaStats stats;
 		uint32_t width = 0;
 		uint32_t height = 0;
-		if (controller_->guestMedia(guestId_, stats, width, height)) {
-			if (width > 0 && height > 0)
-				parts << QStringLiteral("%1×%2").arg(width).arg(height);
-			if (stats.videoBitrateKbps > 1.0)
-				parts << formatBitrate(stats.videoBitrateKbps);
-			if (stats.videoLoss >= 0.01)
-				parts << tr_("Guest.Loss").arg(static_cast<int>(stats.videoLoss * 100.0 + 0.5));
-		}
-		if (guest.status.microphoneMuted)
-			parts << tr_("Guest.MicMuted");
-		if (guest.status.cameraMuted)
-			parts << tr_("Guest.CameraOff");
+		const bool haveStats = controller_->guestMedia(guestId_, stats, width, height);
+		const double loss = haveStats ? stats.videoLoss : 0.0;
+		signalLevel = loss >= 0.05 ? 1 : loss >= 0.01 ? 2 : 3;
+		parts << (signalLevel == 3 ? tr_("Guest.State.Connected")
+					   : tr_("Guest.State.Unstable").arg(static_cast<int>(loss * 100.0 + 0.5)));
+		if (height > 0)
+			parts << QStringLiteral("%1p").arg(height);
+		if (haveStats && stats.videoBitrateKbps > 1.0)
+			parts << formatBitrate(stats.videoBitrateKbps);
 	} else if (connecting) {
 		parts << tr_("Guest.State.Connecting");
 	} else if (controller_->showRunning()) {
@@ -164,11 +205,20 @@ void GuestRow::refresh(const GuestView &guest)
 	} else {
 		parts << tr_("Guest.State.ShowOff");
 	}
-	detailLabel_->setText(parts.join(QStringLiteral(" · ")));
+	signal_->setVisible(connected);
+	signal_->setLevel(signalLevel);
+	const QString detail = parts.join(QStringLiteral(" · "));
+	detailLabel_->setText(detail);
 
-	inScene_ = controller_->isGuestInCurrentScene(guestId_);
-	sceneButton_->setText(inScene_ ? tr_("Guest.RemoveFromScene") : tr_("Guest.AddToScene"));
-	sceneButton_->setToolTip(inScene_ ? tr_("Guest.RemoveFromScene.Tooltip") : tr_("Guest.AddToScene.Tooltip"));
+	QStringList flags;
+	if (connected && guest.status.microphoneMuted)
+		flags << tr_("Guest.MicMuted");
+	if (connected && guest.status.cameraMuted)
+		flags << tr_("Guest.CameraOff");
+	flagsLabel_->setText(flags.join(QStringLiteral(" · ")));
+	flagsLabel_->setVisible(!flags.isEmpty());
+
+	applySceneState();
 
 	refreshAction_->setEnabled(connected);
 	disconnectAction_->setEnabled(connected || connecting);
@@ -192,8 +242,13 @@ void GuestRow::toggleScene()
 		emit notice(tr_("Notice.NoScene"));
 		return;
 	}
-	inScene_ = controller_->isGuestInCurrentScene(guestId_);
-	sceneButton_->setText(inScene_ ? tr_("Guest.RemoveFromScene") : tr_("Guest.AddToScene"));
+	applySceneState();
+}
+
+void GuestRow::toggleMute()
+{
+	controller_->setGuestMuted(guestId_, !muted_);
+	applySceneState();
 }
 
 void GuestRow::rename()

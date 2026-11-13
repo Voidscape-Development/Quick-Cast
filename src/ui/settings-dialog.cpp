@@ -20,21 +20,23 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "obs/scene-integration.hpp"
 #include "ui-helpers.hpp"
+#include "ui-style.hpp"
 #include "vdo/identity.hpp"
 
 #include <obs.h>
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSpinBox>
-#include <QTabWidget>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 
 #include <cstring>
@@ -47,7 +49,7 @@ QLabel *hint(const QString &text, QWidget *parent)
 {
 	auto *label = new QLabel(text, parent);
 	label->setWordWrap(true);
-	label->setEnabled(false);
+	ui::styleMuted(label);
 	return label;
 }
 
@@ -95,61 +97,133 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	  controller_(controller)
 {
 	setWindowTitle(tr_("Settings.Title"));
-	setMinimumWidth(460);
+	setMinimumSize(700, 500);
 	const Settings &settings = controller_->settings();
+	const ui::Colors c = ui::colors(this);
 
-	// --- Show ---
-	auto *showGroup = new QWidget(this);
-	auto *showForm = new QFormLayout(showGroup);
-	hostName_ = new QLineEdit(QString::fromStdString(settings.hostName), showGroup);
+	// Builders that keep every page on the same rhythm: page title, one-line purpose, then titled groups.
+	const auto makePage = [this](const char *title, const char *purpose, QVBoxLayout *&body) {
+		auto *content = new QWidget(this);
+		body = new QVBoxLayout(content);
+		body->setContentsMargins(24, 20, 24, 20);
+		body->setSpacing(8);
+		auto *heading = new QLabel(tr_(title), content);
+		ui::styleHeading(heading, 1.35);
+		auto *summary = new QLabel(tr_(purpose), content);
+		summary->setWordWrap(true);
+		ui::styleMuted(summary, 1.0);
+		body->addWidget(heading);
+		body->addWidget(summary);
+		body->addSpacing(6);
+
+		auto *scroll = new QScrollArea(this);
+		scroll->setWidgetResizable(true);
+		scroll->setFrameShape(QFrame::NoFrame);
+		scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+		scroll->setWidget(content);
+		scroll->viewport()->setAutoFillBackground(false);
+		content->setAutoFillBackground(false);
+		return scroll;
+	};
+	int groupCount = 0;
+	const auto makeGroup = [this, &groupCount](QVBoxLayout *body, const char *title) {
+		auto *label = new QLabel(tr_(title), body->parentWidget());
+		ui::styleMuted(label, 0.88);
+		label->setStyleSheet(label->styleSheet() + QStringLiteral(" font-weight: 700;"));
+		QFont font = label->font();
+		font.setBold(true);
+		font.setCapitalization(QFont::AllUppercase);
+		font.setLetterSpacing(QFont::PercentageSpacing, 108);
+		label->setFont(font);
+		label->setContentsMargins(2, 8, 0, 0);
+
+		auto *card = new QWidget(body->parentWidget());
+		card->setObjectName(QStringLiteral("quickCastSettingsGroup%1").arg(groupCount++));
+		ui::styleCard(card);
+		auto *form = new QFormLayout(card);
+		form->setContentsMargins(14, 12, 14, 12);
+		form->setHorizontalSpacing(14);
+		form->setVerticalSpacing(8);
+		form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+		form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+		body->addWidget(label);
+		body->addWidget(card);
+		return form;
+	};
+
+	// ------------------------------------------------------------------------------------------------- Show
+	QVBoxLayout *showBody = nullptr;
+	QWidget *showPage = makePage("Settings.Show.Heading", "Settings.Show.Purpose", showBody);
+
+	QFormLayout *identity = makeGroup(showBody, "Settings.Group.Identity");
+	hostName_ = new QLineEdit(QString::fromStdString(settings.hostName), this);
 	hostName_->setMaxLength(40);
-	room_ = new QLineEdit(QString::fromStdString(settings.room), showGroup);
+	identity->addRow(tr_("Settings.HostName"), hostName_);
+	identity->addRow(hint(tr_("Settings.HostNameHint"), this));
+
+	QFormLayout *links = makeGroup(showBody, "Settings.Group.Links");
+	room_ = new QLineEdit(QString::fromStdString(settings.room), this);
 	room_->setMaxLength(static_cast<int>(vdo::kMaxRoomIdLength));
-	password_ = new QLineEdit(QString::fromStdString(settings.password), showGroup);
+	password_ = new QLineEdit(QString::fromStdString(settings.password), this);
 	password_->setMaxLength(64);
-	auto *regenerate = new QPushButton(tr_("Settings.NewLinks"), showGroup);
+	auto *regenerate = new QPushButton(tr_("Settings.NewLinks"), this);
 	regenerate->setToolTip(tr_("Settings.NewLinks.Tooltip"));
-	startWithObs_ = new QCheckBox(tr_("Settings.StartWithObs"), showGroup);
+	ui::styleButton(regenerate, ui::ButtonKind::Danger);
+	links->addRow(tr_("Settings.Room"), room_);
+	links->addRow(tr_("Settings.Password"), password_);
+	links->addRow(hint(tr_("Settings.LinksHint"), this));
+	auto *regenerateRow = new QHBoxLayout();
+	regenerateRow->addWidget(regenerate);
+	regenerateRow->addStretch(1);
+	links->addRow(regenerateRow);
+
+	QFormLayout *startup = makeGroup(showBody, "Settings.Group.Startup");
+	startWithObs_ = new QCheckBox(tr_("Settings.StartWithObs"), this);
 	startWithObs_->setChecked(settings.startWithObs);
+	startup->addRow(startWithObs_);
+	showBody->addStretch(1);
 
-	showForm->addRow(tr_("Settings.HostName"), hostName_);
-	showForm->addRow(tr_("Settings.Room"), room_);
-	showForm->addRow(tr_("Settings.Password"), password_);
-	showForm->addRow(QString(), regenerate);
-	showForm->addRow(hint(tr_("Settings.LinksHint"), showGroup));
-	showForm->addRow(QString(), startWithObs_);
+	// ------------------------------------------------------------------------------------------ Guest video
+	QVBoxLayout *guestBody = nullptr;
+	QWidget *guestPage = makePage("Settings.Guests.Heading", "Settings.Guests.Purpose", guestBody);
 
-	// --- Guests ---
-	auto *guestGroup = new QWidget(this);
-	auto *guestForm = new QFormLayout(guestGroup);
-	quality_ = new QComboBox(guestGroup);
+	QFormLayout *quality = makeGroup(guestBody, "Settings.Group.Quality");
+	quality_ = new QComboBox(this);
 	quality_->addItem(tr_("Settings.Quality.Low"), 1500);
 	quality_->addItem(tr_("Settings.Quality.Standard"), 2500);
 	quality_->addItem(tr_("Settings.Quality.High"), 4000);
 	quality_->addItem(tr_("Settings.Quality.VeryHigh"), 8000);
 	selectData(quality_, static_cast<int>(settings.guestBitrateKbps));
-	codec_ = new QComboBox(guestGroup);
+	codec_ = new QComboBox(this);
 	codec_->addItem(QStringLiteral("H.264"), static_cast<int>(VideoCodec::H264));
 	codec_->addItem(QStringLiteral("VP8"), static_cast<int>(VideoCodec::VP8));
 	codec_->addItem(QStringLiteral("VP9"), static_cast<int>(VideoCodec::VP9));
 	selectData(codec_, static_cast<int>(settings.preferredCodec));
-	hardwareDecoding_ = new QCheckBox(tr_("Settings.HardwareDecoding"), guestGroup);
-	hardwareDecoding_->setChecked(settings.hardwareDecoding);
-	fitToCanvas_ = new QCheckBox(tr_("Settings.FitToCanvas"), guestGroup);
-	fitToCanvas_->setChecked(settings.fitToCanvas);
-	guestForm->addRow(tr_("Settings.Quality"), quality_);
-	guestForm->addRow(tr_("Settings.Codec"), codec_);
-	guestForm->addRow(hint(tr_("Settings.CodecHint"), guestGroup));
-	guestForm->addRow(QString(), hardwareDecoding_);
-	guestForm->addRow(hint(tr_("Settings.HardwareDecodingHint"), guestGroup));
-	guestForm->addRow(QString(), fitToCanvas_);
+	quality->addRow(tr_("Settings.Quality"), quality_);
+	quality->addRow(tr_("Settings.Codec"), codec_);
+	quality->addRow(hint(tr_("Settings.CodecHint"), this));
 
-	// --- Return feed ---
-	auto *returnGroup = new QWidget(this);
-	auto *returnForm = new QFormLayout(returnGroup);
-	returnEnabled_ = new QCheckBox(tr_("Settings.Return.Enable"), returnGroup);
+	QFormLayout *performance = makeGroup(guestBody, "Settings.Group.Performance");
+	hardwareDecoding_ = new QCheckBox(tr_("Settings.HardwareDecoding"), this);
+	hardwareDecoding_->setChecked(settings.hardwareDecoding);
+	performance->addRow(hardwareDecoding_);
+	performance->addRow(hint(tr_("Settings.HardwareDecodingHint"), this));
+
+	QFormLayout *scenes = makeGroup(guestBody, "Settings.Group.Scenes");
+	fitToCanvas_ = new QCheckBox(tr_("Settings.FitToCanvas"), this);
+	fitToCanvas_->setChecked(settings.fitToCanvas);
+	scenes->addRow(fitToCanvas_);
+	guestBody->addStretch(1);
+
+	// ------------------------------------------------------------------------------------- What guests see
+	QVBoxLayout *returnBody = nullptr;
+	QWidget *returnPage = makePage("Settings.Return.Heading", "Settings.Return.Purpose", returnBody);
+
+	returnEnabled_ = new QCheckBox(tr_("Settings.Return.Enable"), this);
 	returnEnabled_->setChecked(settings.returnFeedEnabled);
-	returnVideo_ = new QComboBox(returnGroup);
+	returnBody->addWidget(returnEnabled_);
+
+	returnVideo_ = new QComboBox(this);
 	returnVideo_->addItem(tr_("Settings.Return.Video.Program"), QString());
 	for (const QString &name : videoSourceNames())
 		returnVideo_->addItem(name, name);
@@ -163,8 +237,9 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 		}
 		returnVideo_->setCurrentIndex(index);
 	}
+
 	// Second feed: off, the program, or any source. "Off" is a null variant; the program is an empty name.
-	secondVideo_ = new QComboBox(returnGroup);
+	secondVideo_ = new QComboBox(this);
 	secondVideo_->addItem(tr_("Settings.Return.Second.Off"), QVariant());
 	secondVideo_->addItem(tr_("Settings.Return.Video.Program"), QString());
 	for (const QString &name : videoSourceNames())
@@ -186,12 +261,9 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 		}
 		secondVideo_->setCurrentIndex(index);
 	}
-	returnTrack_ = new QComboBox(returnGroup);
-	for (int track = 1; track <= 6; ++track)
-		returnTrack_->addItem(tr_("Settings.Return.TrackN").arg(track), track);
-	selectData(returnTrack_, settings.returnAudioTrack);
-	const auto makeResolution = [returnGroup](uint32_t height) {
-		auto *combo = new QComboBox(returnGroup);
+
+	const auto makeResolution = [this](uint32_t height) {
+		auto *combo = new QComboBox(this);
 		combo->addItem(QStringLiteral("360p"), 360);
 		combo->addItem(QStringLiteral("540p"), 540);
 		combo->addItem(QStringLiteral("720p"), 720);
@@ -201,8 +273,8 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 		combo->setToolTip(tr_("Settings.Return.Resolution"));
 		return combo;
 	};
-	const auto makeBitrate = [returnGroup](uint32_t kbps) {
-		auto *spin = new QSpinBox(returnGroup);
+	const auto makeBitrate = [this](uint32_t kbps) {
+		auto *spin = new QSpinBox(this);
 		spin->setRange(200, 8000);
 		spin->setSingleStep(100);
 		spin->setSuffix(QStringLiteral(" kbps"));
@@ -211,13 +283,11 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 		spin->setToolTip(tr_("Settings.Return.Bitrate"));
 		return spin;
 	};
-	// Each feed gets its own "resolution at bitrate" row directly under its source.
-	const auto qualityRow = [returnGroup](QComboBox *resolution, QSpinBox *bitrate) {
-		auto *row = new QWidget(returnGroup);
-		auto *layout = new QHBoxLayout(row);
-		layout->setContentsMargins(0, 0, 0, 0);
-		layout->addWidget(resolution, 1);
-		layout->addWidget(bitrate, 1);
+	const auto qualityRow = [](QComboBox *resolution, QSpinBox *bitrate) {
+		auto *row = new QHBoxLayout();
+		row->setContentsMargins(0, 0, 0, 0);
+		row->addWidget(resolution, 1);
+		row->addWidget(bitrate, 1);
 		return row;
 	};
 	returnResolution_ = makeResolution(settings.returnHeight);
@@ -225,14 +295,24 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	secondResolution_ = makeResolution(settings.secondHeight);
 	secondBitrate_ = makeBitrate(settings.secondVideoBitrateKbps);
 
-	returnForm->addRow(QString(), returnEnabled_);
-	returnForm->addRow(tr_("Settings.Return.Video"), returnVideo_);
-	returnForm->addRow(tr_("Settings.Return.Quality"), qualityRow(returnResolution_, returnBitrate_));
-	returnForm->addRow(tr_("Settings.Return.Second"), secondVideo_);
-	returnForm->addRow(tr_("Settings.Return.Quality"), qualityRow(secondResolution_, secondBitrate_));
-	returnForm->addRow(hint(tr_("Settings.Return.VideoHint"), returnGroup));
-	returnForm->addRow(tr_("Settings.Return.Track"), returnTrack_);
-	returnForm->addRow(hint(tr_("Settings.Return.TrackHint"), returnGroup));
+	QFormLayout *mainFeed = makeGroup(returnBody, "Settings.Return.Video");
+	mainFeed->addRow(tr_("Settings.Return.Source"), returnVideo_);
+	mainFeed->addRow(tr_("Settings.Return.Quality"), qualityRow(returnResolution_, returnBitrate_));
+	mainFeed->addRow(hint(tr_("Settings.Return.MainHint"), this));
+
+	QFormLayout *secondFeed = makeGroup(returnBody, "Settings.Return.Second");
+	secondFeed->addRow(tr_("Settings.Return.Source"), secondVideo_);
+	secondFeed->addRow(tr_("Settings.Return.Quality"), qualityRow(secondResolution_, secondBitrate_));
+	secondFeed->addRow(hint(tr_("Settings.Return.SecondHint"), this));
+
+	QFormLayout *audio = makeGroup(returnBody, "Settings.Group.Audio");
+	returnTrack_ = new QComboBox(this);
+	for (int track = 1; track <= 6; ++track)
+		returnTrack_->addItem(tr_("Settings.Return.TrackN").arg(track), track);
+	selectData(returnTrack_, settings.returnAudioTrack);
+	audio->addRow(tr_("Settings.Return.Track"), returnTrack_);
+	audio->addRow(hint(tr_("Settings.Return.TrackHint"), this));
+	returnBody->addStretch(1);
 
 	const auto syncReturnControls = [this] {
 		const bool enabled = returnEnabled_->isChecked();
@@ -249,34 +329,80 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	connect(secondVideo_, &QComboBox::currentIndexChanged, this, syncReturnControls);
 	syncReturnControls();
 
-	// --- Network ---
-	auto *networkGroup = new QWidget(this);
-	auto *networkForm = new QFormLayout(networkGroup);
-	turnUrl_ = new QLineEdit(QString::fromStdString(settings.turnUrl), networkGroup);
+	// ---------------------------------------------------------------------------------------------- Network
+	QVBoxLayout *networkBody = nullptr;
+	QWidget *networkPage = makePage("Settings.Network.Heading", "Settings.Network.Purpose", networkBody);
+	QFormLayout *turn = makeGroup(networkBody, "Settings.Group.Turn");
+	turnUrl_ = new QLineEdit(QString::fromStdString(settings.turnUrl), this);
 	turnUrl_->setPlaceholderText(QStringLiteral("turn:turn.example.com:3478"));
-	turnUsername_ = new QLineEdit(QString::fromStdString(settings.turnUsername), networkGroup);
-	turnPassword_ = new QLineEdit(QString::fromStdString(settings.turnPassword), networkGroup);
+	turnUsername_ = new QLineEdit(QString::fromStdString(settings.turnUsername), this);
+	turnPassword_ = new QLineEdit(QString::fromStdString(settings.turnPassword), this);
 	turnPassword_->setEchoMode(QLineEdit::Password);
-	networkForm->addRow(hint(tr_("Settings.Network.Hint"), networkGroup));
-	networkForm->addRow(tr_("Settings.Network.TurnUrl"), turnUrl_);
-	networkForm->addRow(tr_("Settings.Network.TurnUser"), turnUsername_);
-	networkForm->addRow(tr_("Settings.Network.TurnPassword"), turnPassword_);
+	turn->addRow(tr_("Settings.Network.TurnUrl"), turnUrl_);
+	turn->addRow(tr_("Settings.Network.TurnUser"), turnUsername_);
+	turn->addRow(tr_("Settings.Network.TurnPassword"), turnPassword_);
+	turn->addRow(hint(tr_("Settings.Network.Hint"), this));
+	networkBody->addStretch(1);
 
-	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
-	connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::save);
-	connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+	// ------------------------------------------------------------------------------------------ Navigation
+	// A sidebar instead of tabs: the sections are few, unequal in size, and worth naming in full.
+	auto *navigation = new QListWidget(this);
+	navigation->setFixedWidth(176);
+	navigation->setFrameShape(QFrame::NoFrame);
+	navigation->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	navigation->setAccessibleName(tr_("Settings.Title"));
+	navigation->setStyleSheet(
+		QStringLiteral(
+			"QListWidget { background-color: %1; border: none; border-right: 1px solid %2;"
+			" padding: 12px 8px; outline: 0; }"
+			"QListWidget::item { padding: 8px 10px; border-radius: 6px; margin-bottom: 2px; color: %3; }"
+			"QListWidget::item:hover { background-color: %4; }"
+			"QListWidget::item:selected { background-color: %5; color: %6; }")
+			.arg(ui::css(c.card), ui::css(c.border), ui::css(c.text), ui::css(c.cardHover),
+			     ui::css(c.accent), ui::css(c.accentText)));
+	auto *pages = new QStackedWidget(this);
+	const auto addPage = [&](const char *name, QWidget *page) {
+		navigation->addItem(tr_(name));
+		pages->addWidget(page);
+	};
+	addPage("Settings.Show", showPage);
+	addPage("Settings.Guests", guestPage);
+	addPage("Settings.Return", returnPage);
+	addPage("Settings.Network", networkPage);
+	connect(navigation, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
+	navigation->setCurrentRow(0);
+
+	auto *saveButton = new QPushButton(tr_("Settings.Save"), this);
+	saveButton->setDefault(true);
+	ui::styleButton(saveButton, ui::ButtonKind::Primary);
+	auto *cancelButton = new QPushButton(tr_("Settings.Cancel"), this);
+	ui::styleButton(cancelButton, ui::ButtonKind::Secondary);
+	connect(saveButton, &QPushButton::clicked, this, &SettingsDialog::save);
+	connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
 	connect(regenerate, &QPushButton::clicked, this, &SettingsDialog::regenerateLinks);
 
-	// Tabs keep the dialog short enough for small screens and put the everyday options first.
-	auto *tabs = new QTabWidget(this);
-	tabs->addTab(showGroup, tr_("Settings.Show"));
-	tabs->addTab(guestGroup, tr_("Settings.Guests"));
-	tabs->addTab(returnGroup, tr_("Settings.Return"));
-	tabs->addTab(networkGroup, tr_("Settings.Network"));
+	auto *footer = new QWidget(this);
+	footer->setObjectName(QStringLiteral("quickCastSettingsFooter"));
+	footer->setAttribute(Qt::WA_StyledBackground, true);
+	footer->setStyleSheet(
+		QStringLiteral("#quickCastSettingsFooter { border-top: 1px solid %1; }").arg(ui::css(c.border)));
+	auto *footerLayout = new QHBoxLayout(footer);
+	footerLayout->setContentsMargins(16, 10, 16, 10);
+	footerLayout->addStretch(1);
+	footerLayout->addWidget(cancelButton);
+	footerLayout->addWidget(saveButton);
+
+	auto *body = new QHBoxLayout();
+	body->setContentsMargins(0, 0, 0, 0);
+	body->setSpacing(0);
+	body->addWidget(navigation);
+	body->addWidget(pages, 1);
 
 	auto *layout = new QVBoxLayout(this);
-	layout->addWidget(tabs);
-	layout->addWidget(buttons);
+	layout->setContentsMargins(0, 0, 0, 0);
+	layout->setSpacing(0);
+	layout->addLayout(body, 1);
+	layout->addWidget(footer);
 }
 
 void SettingsDialog::regenerateLinks()

@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include "obs/session-controller.hpp"
+#include "ui-style.hpp"
 
 #include <QFrame>
 
@@ -29,7 +30,10 @@ class QToolButton;
 
 namespace qc {
 
-/** One guest in the dock: who they are, how their connection is doing, and the things you can do with them. */
+/**
+ * One guest in the dock, as a card: who they are, how their connection is doing, and the two things a host does most
+ * (put them on screen, send them their link) one click away. Everything else lives in the overflow menu.
+ */
 class GuestRow final : public QFrame {
 	Q_OBJECT
 
@@ -39,6 +43,8 @@ public:
 	const std::string &guestId() const { return guestId_; }
 	/** Re-reads everything that can change without the guest list changing. */
 	void refresh(const GuestView &guest);
+	/** Re-applies colours after the OBS theme changed. */
+	void restyle();
 
 signals:
 	/** A short confirmation the dock should show (e.g. "link copied"). */
@@ -47,21 +53,29 @@ signals:
 private:
 	void copyLink();
 	void toggleScene();
+	void toggleMute();
 	void rename();
 	void remove();
+	void applySceneState();
 
 	SessionController *controller_;
 	std::string guestId_;
 	QString name_;
 	bool inScene_ = false;
+	bool muted_ = false;
+	bool sceneStateKnown_ = false;
+	bool connected_ = false;
+	bool styledConnected_ = false;
 
-	QLabel *dot_;
-	QLabel *nameLabel_;
-	QLabel *detailLabel_;
+	ui::Avatar *avatar_;
+	ui::ElidedLabel *nameLabel_;
+	ui::SignalBars *signal_;
+	ui::ElidedLabel *detailLabel_;
+	QLabel *flagsLabel_;
 	QPushButton *sceneButton_;
-	QPushButton *linkButton_;
+	QToolButton *linkButton_;
+	QToolButton *muteButton_;
 	QToolButton *menuButton_;
-	QAction *muteAction_;
 	QAction *refreshAction_;
 	QAction *disconnectAction_;
 };

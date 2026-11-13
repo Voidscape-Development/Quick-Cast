@@ -14,7 +14,8 @@ the plugin is structured so a first-party service can replace it later.
 
 1. Open the **Quick Cast** dock. It appears on the right the first time the plugin loads; afterwards it lives under
    **Docks → Quick Cast**.
-2. Click **Invite guest…**, type the guest's name, and send them the link that was copied to your clipboard.
+2. Click **Invite guest**, type the guest's name, and send them the link the dialog shows (it is already on your
+   clipboard).
 3. Click **Start show**. When the guest opens their link, their row turns green.
 4. Click **Add to scene** on their row.
 
@@ -23,9 +24,10 @@ source stays bound to that seat, so a guest who drops and rejoins comes back in 
 
 Other things the dock can do:
 
-- **Copy open invite link** (under ⋯) gives you one link for anyone. Each person who joins with it is added to
+- The **link button** next to *Invite guest* copies an open invite link: one link for anyone. Each person who joins with it is added to
   the list under the name they type.
-- The ⋯ menu on a guest renames them, mutes them in OBS, refreshes their video, disconnects them, or removes them.
+- Each guest card has buttons to copy their link and, once they are in a scene, mute them in OBS. Its ⋯ menu
+  renames them, refreshes their video, disconnects them, or removes them.
 - Guest sources are ordinary OBS sources named `Guest: <name>`. You can crop, filter, and arrange them like any
   other source, and add them to more scenes with **Add → Quick Cast Guest**.
 
@@ -34,7 +36,7 @@ Other things the dock can do:
 While at least one guest is connected, Quick Cast sends them your program output and one OBS audio track so they can
 follow the show. Two things to know:
 
-- Guests see your **program output** by default. Under Settings → Return feed you can change the **main feed** to
+- Guests see your **program output** by default. Under Settings → What guests see you can change the **main feed** to
   any source or scene, for example your camera.
 - You can also turn on a **second feed** (the program or any other source). Guests see it as a separate tile next
   to the main one. A typical co-streaming setup is main feed = your camera, second feed = the program or a screen
@@ -48,13 +50,13 @@ follow the show. Two things to know:
 
 ### Settings
 
-**⋯ → Settings…** in the dock:
+The **gear button** at the bottom of the dock:
 
-| Tab | What is there |
+| Section | What is there |
 | --- | --- |
 | Show | Your display name, the show name and password that every invite link is built from, a button to generate new ones if a link leaks, and "start the show when OBS starts". |
-| Guests | Video quality requested from guests (1.5 to 8 Mbps), preferred codec (H.264, VP8 or VP9), hardware decoding, and whether new guests are fitted to the canvas. |
-| Return feed | On/off, the main feed and optional second feed (program or a chosen source such as your camera), audio track, resolution, and bitrate. |
+| Guest video | Video quality requested from guests (1.5 to 8 Mbps), preferred codec (H.264, VP8 or VP9), hardware decoding, and whether new guests are fitted to the canvas. |
+| What guests see | On/off, the main feed and optional second feed (program or a chosen source such as your camera), audio track, resolution, and bitrate. |
 | Network | An optional TURN relay for networks that block direct connections. |
 
 Settings are stored in the plugin's config directory (`plugin_config/quick-cast/settings.json`) and are shared by all

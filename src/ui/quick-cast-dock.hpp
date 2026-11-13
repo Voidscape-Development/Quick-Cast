@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "obs/session-controller.hpp"
 
+#include <QElapsedTimer>
 #include <QWidget>
 
 #include <map>
@@ -27,23 +28,33 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 class QLabel;
 class QPushButton;
 class QTimer;
+class QToolButton;
 class QVBoxLayout;
 
 namespace qc {
 
 class GuestRow;
 
-/** The Quick Cast dock: start/stop the show, invite guests, and put them on screen. */
+/**
+ * The Quick Cast dock.
+ *
+ * Top to bottom it follows the host's own sequence: is the show running, who is here, bring someone new in. Exactly
+ * one button is emphasised at a time, and it is always the next sensible step.
+ */
 class QuickCastDock final : public QWidget {
 	Q_OBJECT
 
 public:
 	explicit QuickCastDock(SessionController *controller, QWidget *parent = nullptr);
 
+protected:
+	void changeEvent(QEvent *event) override;
+
 private:
 	void rebuildGuests();
 	void refreshGuests();
 	void refreshState();
+	void restyle();
 	void inviteGuest();
 	void copyOpenLink();
 	void openSettings();
@@ -51,15 +62,26 @@ private:
 
 	SessionController *controller_;
 
-	QLabel *stateDot_;
-	QLabel *stateLabel_;
+	QWidget *statusCard_;
+	QLabel *statePill_;
+	QLabel *timerLabel_;
+	QLabel *headline_;
+	QLabel *subline_;
 	QPushButton *showButton_;
 	QLabel *noticeLabel_;
-	QLabel *emptyLabel_;
+	QWidget *emptyState_;
+	QLabel *emptyTitle_;
+	QLabel *emptyText_;
+	QLabel *listHeading_;
 	QWidget *guestContainer_;
 	QVBoxLayout *guestLayout_;
+	QPushButton *inviteButton_;
+	QToolButton *openLinkButton_;
+	QToolButton *settingsButton_;
 	QTimer *refreshTimer_;
 	QTimer *noticeTimer_;
+	QElapsedTimer liveClock_;
+	bool restyling_ = false;
 	std::map<std::string, GuestRow *> rows_;
 };
 

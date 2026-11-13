@@ -19,15 +19,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "quick-cast-dock.hpp"
 
 #include "guest-row.hpp"
+#include "invite-dialog.hpp"
 #include "settings-dialog.hpp"
 #include "ui-helpers.hpp"
+#include "ui-style.hpp"
 
 #include <QApplication>
 #include <QClipboard>
+#include <QEvent>
 #include <QHBoxLayout>
-#include <QInputDialog>
 #include <QLabel>
-#include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QTimer>
@@ -36,41 +37,79 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 namespace qc {
 
+namespace {
+
+QString formatElapsed(qint64 milliseconds)
+{
+	const qint64 seconds = milliseconds / 1000;
+	const qint64 hours = seconds / 3600;
+	const qint64 minutes = (seconds / 60) % 60;
+	if (hours > 0)
+		return QStringLiteral("%1:%2:%3")
+			.arg(hours)
+			.arg(minutes, 2, 10, QLatin1Char('0'))
+			.arg(seconds % 60, 2, 10, QLatin1Char('0'));
+	return QStringLiteral("%1:%2").arg(minutes, 2, 10, QLatin1Char('0')).arg(seconds % 60, 2, 10, QLatin1Char('0'));
+}
+
+} // namespace
+
 QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : QWidget(parent), controller_(controller)
 {
-	setMinimumWidth(240);
+	setMinimumWidth(280);
 
-	// --- Header: show state and the one button that matters most ---
-	stateDot_ = new QLabel(this);
-	stateDot_->setFixedSize(10, 10);
-	stateLabel_ = new QLabel(this);
-	stateLabel_->setWordWrap(true);
-	showButton_ = new QPushButton(this);
-	showButton_->setMinimumHeight(30);
+	// --- Status card: the state of the show and the button that changes it ---
+	statusCard_ = new QWidget(this);
+	statusCard_->setObjectName(QStringLiteral("quickCastStatusCard"));
+	statePill_ = new QLabel(statusCard_);
+	timerLabel_ = new QLabel(statusCard_);
+	headline_ = new QLabel(statusCard_);
+	headline_->setWordWrap(true);
+	subline_ = new QLabel(statusCard_);
+	subline_->setWordWrap(true);
+	showButton_ = new QPushButton(statusCard_);
 
-	auto *stateLine = new QHBoxLayout();
-	stateLine->setSpacing(8);
-	stateLine->addWidget(stateDot_, 0, Qt::AlignVCenter);
-	stateLine->addWidget(stateLabel_, 1);
+	auto *pillLine = new QHBoxLayout();
+	pillLine->setSpacing(8);
+	pillLine->addWidget(statePill_, 0, Qt::AlignVCenter);
+	pillLine->addWidget(timerLabel_, 0, Qt::AlignVCenter);
+	pillLine->addStretch(1);
+
+	auto *statusLayout = new QVBoxLayout(statusCard_);
+	statusLayout->setContentsMargins(12, 12, 12, 12);
+	statusLayout->setSpacing(4);
+	statusLayout->addLayout(pillLine);
+	statusLayout->addSpacing(2);
+	statusLayout->addWidget(headline_);
+	statusLayout->addWidget(subline_);
+	statusLayout->addSpacing(8);
+	statusLayout->addWidget(showButton_);
 
 	noticeLabel_ = new QLabel(this);
 	noticeLabel_->setWordWrap(true);
 	noticeLabel_->setVisible(false);
-	noticeLabel_->setStyleSheet(
-		QStringLiteral("padding: 6px 8px; border-radius: 4px; background-color: rgba(46, 204, 113, 40);"));
 
 	// --- Guest list ---
+	listHeading_ = new QLabel(tr_("Dock.Guests"), this);
+
 	guestContainer_ = new QWidget(this);
 	guestLayout_ = new QVBoxLayout(guestContainer_);
 	guestLayout_->setContentsMargins(0, 0, 0, 0);
-	guestLayout_->setSpacing(6);
+	guestLayout_->setSpacing(8);
 
-	emptyLabel_ = new QLabel(tr_("Dock.Empty"), guestContainer_);
-	emptyLabel_->setWordWrap(true);
-	emptyLabel_->setAlignment(Qt::AlignCenter);
-	emptyLabel_->setEnabled(false);
-	emptyLabel_->setContentsMargins(12, 24, 12, 24);
-	guestLayout_->addWidget(emptyLabel_);
+	emptyState_ = new QWidget(guestContainer_);
+	emptyState_->setObjectName(QStringLiteral("quickCastEmptyState"));
+	emptyTitle_ = new QLabel(tr_("Dock.Empty.Title"), emptyState_);
+	emptyTitle_->setAlignment(Qt::AlignCenter);
+	emptyText_ = new QLabel(tr_("Dock.Empty.Steps"), emptyState_);
+	emptyText_->setWordWrap(true);
+	emptyText_->setTextFormat(Qt::PlainText);
+	auto *emptyLayout = new QVBoxLayout(emptyState_);
+	emptyLayout->setContentsMargins(16, 20, 16, 20);
+	emptyLayout->setSpacing(10);
+	emptyLayout->addWidget(emptyTitle_);
+	emptyLayout->addWidget(emptyText_);
+	guestLayout_->addWidget(emptyState_);
 	guestLayout_->addStretch(1);
 
 	auto *scroll = new QScrollArea(this);
@@ -78,35 +117,27 @@ QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : Q
 	scroll->setFrameShape(QFrame::NoFrame);
 	scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	scroll->setWidget(guestContainer_);
+	scroll->viewport()->setAutoFillBackground(false);
+	guestContainer_->setAutoFillBackground(false);
 
-	// --- Footer ---
-	auto *inviteButton = new QPushButton(tr_("Dock.InviteGuest"), this);
-	inviteButton->setToolTip(tr_("Dock.InviteGuest.Tooltip"));
-
-	auto *moreButton = new QToolButton(this);
-	moreButton->setText(QStringLiteral("⋯"));
-	moreButton->setToolTip(tr_("Dock.More"));
-	moreButton->setAccessibleName(tr_("Dock.More"));
-	moreButton->setPopupMode(QToolButton::InstantPopup);
-	auto *moreMenu = new QMenu(moreButton);
-	QAction *openLinkAction = moreMenu->addAction(tr_("Dock.CopyOpenLink"));
-	openLinkAction->setToolTip(tr_("Dock.CopyOpenLink.Tooltip"));
-	moreMenu->setToolTipsVisible(true);
-	moreMenu->addSeparator();
-	QAction *settingsAction = moreMenu->addAction(tr_("Dock.Settings"));
-	moreButton->setMenu(moreMenu);
+	// --- Footer: bring someone in, plus the two occasional tools ---
+	inviteButton_ = new QPushButton(tr_("Dock.InviteGuest"), this);
+	inviteButton_->setToolTip(tr_("Dock.InviteGuest.Tooltip"));
+	openLinkButton_ = new QToolButton(this);
+	settingsButton_ = new QToolButton(this);
 
 	auto *footer = new QHBoxLayout();
-	footer->setSpacing(6);
-	footer->addWidget(inviteButton, 1);
-	footer->addWidget(moreButton, 0);
+	footer->setSpacing(4);
+	footer->addWidget(inviteButton_, 1);
+	footer->addWidget(openLinkButton_, 0);
+	footer->addWidget(settingsButton_, 0);
 
 	auto *layout = new QVBoxLayout(this);
-	layout->setContentsMargins(8, 8, 8, 8);
-	layout->setSpacing(8);
-	layout->addLayout(stateLine);
-	layout->addWidget(showButton_);
+	layout->setContentsMargins(10, 10, 10, 10);
+	layout->setSpacing(10);
+	layout->addWidget(statusCard_);
 	layout->addWidget(noticeLabel_);
+	layout->addWidget(listHeading_);
 	layout->addWidget(scroll, 1);
 	layout->addLayout(footer);
 
@@ -122,10 +153,13 @@ QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : Q
 		else
 			controller_->startShow();
 	});
-	connect(inviteButton, &QPushButton::clicked, this, &QuickCastDock::inviteGuest);
-	connect(openLinkAction, &QAction::triggered, this, &QuickCastDock::copyOpenLink);
-	connect(settingsAction, &QAction::triggered, this, &QuickCastDock::openSettings);
-	connect(refreshTimer_, &QTimer::timeout, this, &QuickCastDock::refreshGuests);
+	connect(inviteButton_, &QPushButton::clicked, this, &QuickCastDock::inviteGuest);
+	connect(openLinkButton_, &QToolButton::clicked, this, &QuickCastDock::copyOpenLink);
+	connect(settingsButton_, &QToolButton::clicked, this, &QuickCastDock::openSettings);
+	connect(refreshTimer_, &QTimer::timeout, this, [this] {
+		refreshGuests();
+		refreshState();
+	});
 	connect(noticeTimer_, &QTimer::timeout, this, [this] { noticeLabel_->setVisible(false); });
 
 	connect(controller_, &SessionController::stateChanged, this, [this] {
@@ -139,54 +173,155 @@ QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : Q
 	});
 
 	refreshTimer_->start();
+	restyle();
 	rebuildGuests();
-	refreshState();
+}
+
+void QuickCastDock::changeEvent(QEvent *event)
+{
+	QWidget::changeEvent(event);
+	// Follow OBS theme switches. Restyling sets stylesheets, which itself raises StyleChange, hence the guard.
+	if (!restyling_ && (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange)) {
+		restyle();
+		refreshState();
+	}
+}
+
+void QuickCastDock::restyle()
+{
+	restyling_ = true;
+	const ui::Colors c = ui::colors(this);
+
+	ui::styleCard(statusCard_);
+	ui::styleHeading(headline_, 1.1);
+	ui::styleMuted(subline_);
+	ui::styleMuted(timerLabel_, 1.0);
+	timerLabel_->setFont([this] {
+		QFont font = timerLabel_->font();
+		font.setStyleHint(QFont::Monospace);
+		return font;
+	}());
+
+	ui::styleMuted(listHeading_, 0.88);
+	listHeading_->setStyleSheet(listHeading_->styleSheet() + QStringLiteral(" font-weight: 700;"));
+	QFont headingFont = listHeading_->font();
+	headingFont.setBold(true);
+	headingFont.setCapitalization(QFont::AllUppercase);
+	headingFont.setLetterSpacing(QFont::PercentageSpacing, 108);
+	listHeading_->setFont(headingFont);
+
+	emptyState_->setAttribute(Qt::WA_StyledBackground, true);
+	emptyState_->setStyleSheet(QStringLiteral("#quickCastEmptyState { border: 1px dashed %1; border-radius: 8px; }")
+					   .arg(ui::css(c.border)));
+	ui::styleHeading(emptyTitle_, 1.05);
+	ui::styleMuted(emptyText_, 1.0);
+
+	noticeLabel_->setStyleSheet(
+		QStringLiteral(
+			"padding: 8px 10px; border-radius: 6px; background-color: %1; color: %2; border: 1px solid %3;")
+			.arg(ui::css(ui::tint(c.good, 0.16)), ui::css(c.text), ui::css(ui::tint(c.good, 0.45))));
+
+	ui::styleIconButton(openLinkButton_, ui::Icon::Link, tr_("Dock.CopyOpenLink.Tooltip"));
+	ui::styleIconButton(settingsButton_, ui::Icon::Gear, tr_("Dock.Settings"));
+
+	for (auto &[id, row] : rows_)
+		row->restyle();
+	restyling_ = false;
 }
 
 void QuickCastDock::refreshState()
 {
+	restyling_ = true;
+	const ui::Colors c = ui::colors(this);
 	const ServiceState state = controller_->state();
 	const auto guests = controller_->guests();
 	const auto connected = std::count_if(guests.begin(), guests.end(), [](const GuestView &guest) {
 		return guest.status.connection == GuestConnection::Connected;
 	});
+	const bool running = controller_->showRunning();
 
-	QString text;
-	const char *colour = "#7f8c8d";
+	QString pill;
+	QColor pillColor = c.text;
+	QString headline;
+	QString subline;
 	switch (state) {
 	case ServiceState::Stopped:
-		text = tr_("State.Off");
+		pill = tr_("State.Pill.Off");
+		headline = tr_("State.Off");
+		subline = guests.empty() ? tr_("State.Off.HintNoGuests") : tr_("State.Off.Hint");
 		break;
 	case ServiceState::Connecting:
-		text = tr_("State.Connecting");
-		colour = "#f1c40f";
+		pill = tr_("State.Pill.Starting");
+		pillColor = c.warning;
+		headline = tr_("State.Connecting");
 		break;
 	case ServiceState::Live:
-		colour = "#e74c3c";
-		if (guests.empty())
-			text = tr_("State.Live");
-		else
-			text = tr_("State.LiveGuests").arg(connected).arg(guests.size());
+		pill = tr_("State.Pill.Live");
+		pillColor = c.danger;
+		if (guests.empty()) {
+			headline = tr_("State.Live");
+			subline = tr_("State.Live.HintNoGuests");
+		} else {
+			headline = tr_("State.LiveGuests").arg(connected).arg(guests.size());
+			subline = connected == 0 ? tr_("State.Live.HintWaiting") : QString();
+		}
 		break;
 	case ServiceState::Reconnecting:
-		text = tr_("State.Reconnecting");
-		colour = "#f1c40f";
+		pill = tr_("State.Pill.Reconnecting");
+		pillColor = c.warning;
+		headline = tr_("State.Reconnecting");
+		subline = tr_("State.Reconnecting.Hint");
 		break;
 	case ServiceState::Failed:
-		text = tr_("State.Failed");
-		colour = "#e67e22";
+		pill = tr_("State.Pill.Error");
+		pillColor = c.danger;
+		headline = tr_("State.Failed");
 		break;
 	}
 	const QString detail = controller_->stateDetail();
 	if (!detail.isEmpty() && (state == ServiceState::Failed || state == ServiceState::Live))
-		text += QStringLiteral("\n") + detail;
+		subline = detail;
 
-	stateLabel_->setText(text);
-	stateDot_->setStyleSheet(
-		QStringLiteral("background-color: %1; border-radius: 5px;").arg(QLatin1String(colour)));
-	showButton_->setText(controller_->showRunning() ? tr_("Dock.EndShow") : tr_("Dock.StartShow"));
-	showButton_->setToolTip(controller_->showRunning() ? tr_("Dock.EndShow.Tooltip")
-							   : tr_("Dock.StartShow.Tooltip"));
+	statePill_->setText(pill);
+	if (state == ServiceState::Live)
+		ui::stylePill(statePill_, c.danger, QColor(Qt::white));
+	else
+		ui::stylePill(statePill_, ui::tint(pillColor, 0.22),
+			      state == ServiceState::Stopped ? c.text : pillColor);
+
+	// How long the show has been open: reassuring during a broadcast, and a quick sanity check after one.
+	if (state == ServiceState::Live) {
+		if (!liveClock_.isValid())
+			liveClock_.start();
+		timerLabel_->setText(formatElapsed(liveClock_.elapsed()));
+	} else if (state == ServiceState::Stopped || state == ServiceState::Failed) {
+		liveClock_.invalidate();
+	}
+	timerLabel_->setVisible(state == ServiceState::Live);
+
+	headline_->setText(headline);
+	subline_->setText(subline);
+	subline_->setVisible(!subline.isEmpty());
+
+	// One emphasised button at a time, always the next sensible step: invite when there is nobody to host, start
+	// the show once there is. While live the emphasis moves into the list, to the guest waiting to go on screen.
+	const bool inviteIsNext = guests.empty();
+	showButton_->setText(running ? tr_("Dock.EndShow") : tr_("Dock.StartShow"));
+	showButton_->setToolTip(running ? tr_("Dock.EndShow.Tooltip") : tr_("Dock.StartShow.Tooltip"));
+	const bool startIsNext = !running && !inviteIsNext;
+	ui::ButtonKind showKind = ui::ButtonKind::Secondary;
+	if (running)
+		showKind = ui::ButtonKind::Danger;
+	else if (startIsNext)
+		showKind = ui::ButtonKind::Primary;
+	ui::styleButton(showButton_, showKind);
+	showButton_->setIcon(running ? ui::icon(ui::Icon::Stop, c.danger)
+				     : ui::icon(ui::Icon::Play, startIsNext ? c.accentText : c.text));
+	ui::styleButton(inviteButton_, inviteIsNext ? ui::ButtonKind::Primary : ui::ButtonKind::Secondary);
+	inviteButton_->setIcon(ui::icon(ui::Icon::Plus, inviteIsNext ? c.accentText : c.text));
+
+	listHeading_->setText(guests.empty() ? tr_("Dock.Guests") : tr_("Dock.GuestsCount").arg(guests.size()));
+	restyling_ = false;
 }
 
 void QuickCastDock::rebuildGuests()
@@ -199,13 +334,15 @@ void QuickCastDock::rebuildGuests()
 
 	const auto guests = controller_->guests();
 	int index = 0;
+	restyling_ = true;
 	for (const GuestView &guest : guests) {
 		auto *row = new GuestRow(controller_, guest, guestContainer_);
 		connect(row, &GuestRow::notice, this, &QuickCastDock::showNotice);
 		guestLayout_->insertWidget(index++, row);
 		rows_[guest.seat.id] = row;
 	}
-	emptyLabel_->setVisible(guests.empty());
+	restyling_ = false;
+	emptyState_->setVisible(guests.empty());
 	refreshState();
 }
 
@@ -213,11 +350,13 @@ void QuickCastDock::refreshGuests()
 {
 	if (!isVisible())
 		return;
+	restyling_ = true;
 	for (const GuestView &guest : controller_->guests()) {
 		auto it = rows_.find(guest.seat.id);
 		if (it != rows_.end())
 			it->second->refresh(guest);
 	}
+	restyling_ = false;
 }
 
 void QuickCastDock::showNotice(const QString &text)
@@ -229,17 +368,8 @@ void QuickCastDock::showNotice(const QString &text)
 
 void QuickCastDock::inviteGuest()
 {
-	bool accepted = false;
-	const QString name = QInputDialog::getText(window(), tr_("Invite.Title"), tr_("Invite.Label"),
-						   QLineEdit::Normal, QString(), &accepted);
-	if (!accepted || name.trimmed().isEmpty())
-		return;
-
-	const GuestSeat seat = controller_->addGuest(name);
-	QApplication::clipboard()->setText(controller_->inviteLink(seat.id));
-	const QString guestName = QString::fromStdString(seat.name);
-	showNotice(controller_->showRunning() ? tr_("Notice.LinkCopied").arg(guestName)
-					      : tr_("Notice.LinkCopiedShowOff").arg(guestName));
+	InviteDialog dialog(controller_, window());
+	dialog.exec();
 }
 
 void QuickCastDock::copyOpenLink()

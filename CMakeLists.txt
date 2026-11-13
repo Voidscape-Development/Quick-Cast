@@ -78,11 +78,15 @@ target_sources(
     src/obs/settings-store.hpp
     src/ui/guest-row.cpp
     src/ui/guest-row.hpp
+    src/ui/invite-dialog.cpp
+    src/ui/invite-dialog.hpp
     src/ui/quick-cast-dock.cpp
     src/ui/quick-cast-dock.hpp
     src/ui/settings-dialog.cpp
     src/ui/settings-dialog.hpp
     src/ui/ui-helpers.hpp
+    src/ui/ui-style.cpp
+    src/ui/ui-style.hpp
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
