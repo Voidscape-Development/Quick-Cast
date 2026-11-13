@@ -26,12 +26,17 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <condition_variable>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <variant>
 #include <vector>
 
 namespace qc {
+
+/** What a guest source shows while its guest is not sending video. */
+enum class OfflineMode { Nothing = 0, LastFrame = 1, Image = 2 };
 
 /**
  * Decodes one guest's media and feeds it to every OBS source bound to that guest.
@@ -47,6 +52,11 @@ public:
 
 	void addSource(obs_source_t *source);
 	void removeSource(obs_source_t *source);
+	/**
+	 * Sets what `source` shows while the guest is offline, and applies it straight away if they are. The image is
+	 * loaded here, on the caller's thread.
+	 */
+	void setOfflineAppearance(obs_source_t *source, OfflineMode mode, const std::string &imagePath);
 	bool hasSources() const;
 	/** Applies `apply` to every attached source (e.g. to mute them). */
 	void forEachSource(const std::function<void(obs_source_t *)> &apply) const;
@@ -68,12 +78,29 @@ private:
 
 	void run();
 	void enqueue(Item &&item);
-	void clearSources();
+	void showOffline();
+
+	/** Decoded placeholder picture, shared so a frame in flight stays valid if the setting changes. */
+	struct OfflineImage {
+		std::vector<uint8_t> pixels;
+		uint32_t width = 0;
+		uint32_t height = 0;
+		video_format format = VIDEO_FORMAT_BGRA;
+	};
+	struct SourceEntry {
+		obs_source_t *source = nullptr;
+		OfflineMode offlineMode = OfflineMode::Nothing;
+		std::shared_ptr<const OfflineImage> offlineImage;
+	};
+	static std::shared_ptr<const OfflineImage> loadImage(const std::string &path);
+	static void applyOffline(const SourceEntry &entry);
 
 	std::function<void()> requestKeyframe_;
 
 	mutable std::mutex sourcesMutex_;
-	std::vector<obs_source_t *> sources_;
+	std::vector<SourceEntry> sources_;
+	/** True from the first decoded picture until the guest's media stops. */
+	std::atomic<bool> live_{false};
 	std::atomic<bool> haveSources_{false};
 
 	std::mutex queueMutex_;

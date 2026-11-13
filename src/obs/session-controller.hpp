@@ -92,6 +92,10 @@ public:
 	// --- Called by guest sources; safe from any thread ---
 	void attachSource(const std::string &guestId, obs_source_t *source);
 	void detachSource(const std::string &guestId, obs_source_t *source);
+	void setSourceOfflineAppearance(const std::string &guestId, obs_source_t *source, OfflineMode mode,
+					const std::string &imagePath);
+	/** Video bitrate to request from one guest instead of the show default; 0 removes the override. */
+	void setGuestBitrateOverride(const std::string &guestId, uint32_t kbps);
 	std::vector<GuestSeat> seatsSnapshot() const;
 
 signals:
@@ -112,6 +116,7 @@ private:
 	void excludeFromReturnAudio(obs_source_t *source) const;
 	void persist();
 	void publishSeats();
+	void applyBitrateOverrides();
 
 	Settings settings_;
 	std::unique_ptr<GuestService> service_;
@@ -130,6 +135,8 @@ private:
 	std::map<std::string, std::shared_ptr<GuestPlayer>> players_;
 	std::vector<GuestSeat> seatsSnapshot_;
 	int returnAudioTrack_ = 6;
+	GuestQuality defaultQuality_;
+	std::map<std::string, uint32_t> bitrateOverrides_;
 	std::atomic<bool> hardwareDecoding_{true};
 };
 

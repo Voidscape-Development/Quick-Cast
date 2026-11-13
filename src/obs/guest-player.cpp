@@ -21,7 +21,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "media/audio-decoder.hpp"
 #include "media/video-decoder.hpp"
 
+#include <graphics/graphics.h>
 #include <media-io/video-io.h>
+#include <util/platform.h>
 
 extern "C" {
 #include <libavutil/frame.h>
@@ -116,8 +118,14 @@ void GuestPlayer::addSource(obs_source_t *source)
 {
 	{
 		std::lock_guard<std::mutex> lock(sourcesMutex_);
-		if (std::find(sources_.begin(), sources_.end(), source) == sources_.end())
-			sources_.push_back(source);
+		const auto existing =
+			std::find_if(sources_.begin(), sources_.end(),
+				     [source](const SourceEntry &entry) { return entry.source == source; });
+		if (existing == sources_.end()) {
+			SourceEntry entry;
+			entry.source = source;
+			sources_.push_back(std::move(entry));
+		}
 		haveSources_ = !sources_.empty();
 	}
 	// A freshly attached source has nothing to show until the next keyframe arrives.
@@ -128,8 +136,98 @@ void GuestPlayer::addSource(obs_source_t *source)
 void GuestPlayer::removeSource(obs_source_t *source)
 {
 	std::lock_guard<std::mutex> lock(sourcesMutex_);
-	sources_.erase(std::remove(sources_.begin(), sources_.end(), source), sources_.end());
+	sources_.erase(std::remove_if(sources_.begin(), sources_.end(),
+				      [source](const SourceEntry &entry) { return entry.source == source; }),
+		       sources_.end());
 	haveSources_ = !sources_.empty();
+}
+
+std::shared_ptr<const GuestPlayer::OfflineImage> GuestPlayer::loadImage(const std::string &path)
+{
+	if (path.empty())
+		return nullptr;
+
+	gs_color_format gsFormat = GS_UNKNOWN;
+	uint32_t width = 0;
+	uint32_t height = 0;
+	uint8_t *data = gs_create_texture_file_data(path.c_str(), &gsFormat, &width, &height);
+	if (!data)
+		return nullptr;
+
+	auto image = std::make_shared<OfflineImage>();
+	bool supported = true;
+	switch (gsFormat) {
+	case GS_RGBA:
+		image->format = VIDEO_FORMAT_RGBA;
+		break;
+	case GS_BGRA:
+		image->format = VIDEO_FORMAT_BGRA;
+		break;
+	case GS_BGRX:
+		image->format = VIDEO_FORMAT_BGRX;
+		break;
+	default:
+		supported = false;
+		break;
+	}
+	if (supported && width > 0 && height > 0) {
+		image->width = width;
+		image->height = height;
+		image->pixels.assign(data, data + static_cast<size_t>(width) * height * 4);
+	}
+	bfree(data);
+	return image->pixels.empty() ? nullptr : image;
+}
+
+void GuestPlayer::applyOffline(const SourceEntry &entry)
+{
+	switch (entry.offlineMode) {
+	case OfflineMode::LastFrame:
+		// An async source keeps showing its last frame until told otherwise, so there is nothing to do.
+		return;
+	case OfflineMode::Image:
+		if (entry.offlineImage) {
+			const OfflineImage &image = *entry.offlineImage;
+			obs_source_frame frame = {};
+			frame.data[0] = const_cast<uint8_t *>(image.pixels.data());
+			frame.linesize[0] = image.width * 4;
+			frame.width = image.width;
+			frame.height = image.height;
+			frame.format = image.format;
+			frame.full_range = true;
+			frame.timestamp = os_gettime_ns();
+			obs_source_output_video(entry.source, &frame);
+			return;
+		}
+		// No usable image: fall back to showing nothing rather than a stale picture.
+		[[fallthrough]];
+	case OfflineMode::Nothing:
+		obs_source_output_video(entry.source, nullptr);
+		return;
+	}
+}
+
+void GuestPlayer::setOfflineAppearance(obs_source_t *source, OfflineMode mode, const std::string &imagePath)
+{
+	std::shared_ptr<const OfflineImage> image;
+	if (mode == OfflineMode::Image) {
+		image = loadImage(imagePath);
+		if (!image && !imagePath.empty())
+			blog(LOG_WARNING, "[quick-cast] could not load offline image '%s'", imagePath.c_str());
+	}
+
+	std::lock_guard<std::mutex> lock(sourcesMutex_);
+	for (SourceEntry &entry : sources_) {
+		if (entry.source != source)
+			continue;
+		const bool wasLastFrame = entry.offlineMode == OfflineMode::LastFrame;
+		entry.offlineMode = mode;
+		entry.offlineImage = image;
+		// While the guest is live their video simply continues. Offline, switch to the new appearance now,
+		// except that "last frame" has nothing new to show.
+		if (!live_.load() && !(mode == OfflineMode::LastFrame && wasLastFrame))
+			applyOffline(entry);
+	}
 }
 
 bool GuestPlayer::hasSources() const
@@ -140,8 +238,8 @@ bool GuestPlayer::hasSources() const
 void GuestPlayer::forEachSource(const std::function<void(obs_source_t *)> &apply) const
 {
 	std::lock_guard<std::mutex> lock(sourcesMutex_);
-	for (obs_source_t *source : sources_)
-		apply(source);
+	for (const SourceEntry &entry : sources_)
+		apply(entry.source);
 }
 
 void GuestPlayer::enqueue(Item &&item)
@@ -199,11 +297,12 @@ void GuestPlayer::onMediaStopped()
 	enqueue(Stop{});
 }
 
-void GuestPlayer::clearSources()
+void GuestPlayer::showOffline()
 {
+	live_ = false;
 	std::lock_guard<std::mutex> lock(sourcesMutex_);
-	for (obs_source_t *source : sources_)
-		obs_source_output_video(source, nullptr);
+	for (const SourceEntry &entry : sources_)
+		applyOffline(entry);
 	width_ = 0;
 	height_ = 0;
 }
@@ -248,9 +347,10 @@ void GuestPlayer::run()
 		width_ = frame.width;
 		height_ = frame.height;
 
+		live_ = true;
 		std::lock_guard<std::mutex> lock(sourcesMutex_);
-		for (obs_source_t *source : sources_)
-			obs_source_output_video(source, &frame);
+		for (const SourceEntry &entry : sources_)
+			obs_source_output_video(entry.source, &frame);
 	};
 
 	const auto outputAudio = [&](const AVFrame *decoded) {
@@ -276,8 +376,8 @@ void GuestPlayer::run()
 		audio.timestamp = static_cast<uint64_t>(decoded->pts);
 
 		std::lock_guard<std::mutex> lock(sourcesMutex_);
-		for (obs_source_t *source : sources_)
-			obs_source_output_audio(source, &audio);
+		for (const SourceEntry &entry : sources_)
+			obs_source_output_audio(entry.source, &audio);
 	};
 
 	for (;;) {
@@ -302,7 +402,7 @@ void GuestPlayer::run()
 		} else {
 			videoDecoder.reset();
 			audioDecoder.reset();
-			clearSources();
+			showOffline();
 		}
 	}
 }

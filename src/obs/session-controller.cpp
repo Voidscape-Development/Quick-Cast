@@ -90,6 +90,7 @@ void SessionController::publishSeats()
 {
 	hardwareDecoding_ = settings_.hardwareDecoding;
 	std::lock_guard<std::mutex> lock(sharedMutex_);
+	defaultQuality_ = settings_.toShowConfig().defaultQuality;
 	seatsSnapshot_ = settings_.seats;
 	for (auto &[id, player] : players_)
 		player->setHardwareDecoding(settings_.hardwareDecoding);
@@ -114,6 +115,8 @@ void SessionController::startShow()
 	stateDetail_.clear();
 	emit stateChanged();
 	service_->start(settings_.toShowConfig());
+	// Starting a show resets every guest to the default quality; put the per-guest choices back.
+	applyBitrateOverrides();
 }
 
 bool SessionController::takeFirstRun()
@@ -404,6 +407,53 @@ void SessionController::attachSource(const std::string &guestId, obs_source_t *s
 		return;
 	excludeFromReturnAudio(source);
 	ensurePlayer(guestId)->addSource(source);
+}
+
+void SessionController::setSourceOfflineAppearance(const std::string &guestId, obs_source_t *source, OfflineMode mode,
+						   const std::string &imagePath)
+{
+	if (guestId.empty() || !source || shutDown_)
+		return;
+	if (auto player = findPlayer(guestId))
+		player->setOfflineAppearance(source, mode, imagePath);
+}
+
+void SessionController::setGuestBitrateOverride(const std::string &guestId, uint32_t kbps)
+{
+	if (guestId.empty() || shutDown_)
+		return;
+	GuestQuality quality;
+	{
+		std::lock_guard<std::mutex> lock(sharedMutex_);
+		const auto existing = bitrateOverrides_.find(guestId);
+		const uint32_t previous = existing != bitrateOverrides_.end() ? existing->second : 0;
+		if (previous == kbps)
+			return;
+		if (kbps == 0)
+			bitrateOverrides_.erase(guestId);
+		else
+			bitrateOverrides_[guestId] = kbps;
+		quality = defaultQuality_;
+	}
+	if (kbps != 0)
+		quality.maxVideoBitrateKbps = kbps;
+	service_->setGuestQuality(guestId, quality);
+}
+
+void SessionController::applyBitrateOverrides()
+{
+	std::map<std::string, uint32_t> overrides;
+	GuestQuality quality;
+	{
+		std::lock_guard<std::mutex> lock(sharedMutex_);
+		overrides = bitrateOverrides_;
+		quality = defaultQuality_;
+	}
+	for (const auto &[guestId, kbps] : overrides) {
+		GuestQuality guestQuality = quality;
+		guestQuality.maxVideoBitrateKbps = kbps;
+		service_->setGuestQuality(guestId, guestQuality);
+	}
 }
 
 void SessionController::detachSource(const std::string &guestId, obs_source_t *source)

@@ -23,6 +23,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <obs-module.h>
 
+#include <algorithm>
 #include <string>
 
 namespace qc {
@@ -36,7 +37,13 @@ namespace {
 struct GuestSource {
 	obs_source_t *source = nullptr;
 	std::string guestId;
+	/** Whether this source currently holds a quality override for its guest. */
+	bool hasQualityOverride = false;
 };
+
+constexpr const char *kQualitySetting = "quality_kbps";
+constexpr const char *kOfflineModeSetting = "offline_mode";
+constexpr const char *kOfflineImageSetting = "offline_image";
 
 void bind(GuestSource *self, const std::string &guestId)
 {
@@ -44,6 +51,10 @@ void bind(GuestSource *self, const std::string &guestId)
 		return;
 	SessionController *controller = SessionController::instance();
 	if (controller && !self->guestId.empty()) {
+		// The override belongs to the pairing of this source and that guest; it goes when the pairing does.
+		if (self->hasQualityOverride)
+			controller->setGuestBitrateOverride(self->guestId, 0);
+		self->hasQualityOverride = false;
 		controller->detachSource(self->guestId, self->source);
 		obs_source_output_video(self->source, nullptr);
 	}
@@ -62,6 +73,38 @@ void sourceUpdate(void *data, obs_data_t *settings)
 	auto *self = static_cast<GuestSource *>(data);
 	const char *guestId = obs_data_get_string(settings, kGuestIdSetting);
 	bind(self, guestId ? guestId : "");
+
+	SessionController *controller = SessionController::instance();
+	if (!controller || self->guestId.empty())
+		return;
+
+	const auto kbps =
+		static_cast<uint32_t>(std::clamp<long long>(obs_data_get_int(settings, kQualitySetting), 0, 20000));
+	if (kbps != 0 || self->hasQualityOverride)
+		controller->setGuestBitrateOverride(self->guestId, kbps);
+	self->hasQualityOverride = kbps != 0;
+
+	const long long mode = obs_data_get_int(settings, kOfflineModeSetting);
+	const char *image = obs_data_get_string(settings, kOfflineImageSetting);
+	controller->setSourceOfflineAppearance(self->guestId, self->source,
+					       mode == 1   ? OfflineMode::LastFrame
+					       : mode == 2 ? OfflineMode::Image
+							   : OfflineMode::Nothing,
+					       image ? image : "");
+}
+
+void sourceDefaults(obs_data_t *settings)
+{
+	obs_data_set_default_int(settings, kQualitySetting, 0);
+	obs_data_set_default_int(settings, kOfflineModeSetting, 0);
+}
+
+bool offlineModeChanged(obs_properties_t *properties, obs_property_t *, obs_data_t *settings)
+{
+	// The image picker only matters for the one mode that uses it.
+	obs_property_set_visible(obs_properties_get(properties, kOfflineImageSetting),
+				 obs_data_get_int(settings, kOfflineModeSetting) == 2);
+	return true;
 }
 
 void *sourceCreate(obs_data_t *settings, obs_source_t *source)
@@ -90,6 +133,28 @@ obs_properties_t *sourceProperties(void *)
 			obs_property_list_add_string(list, seat.name.c_str(), seat.id.c_str());
 	}
 	obs_properties_add_text(properties, "hint", obs_module_text("Source.Hint"), OBS_TEXT_INFO);
+
+	obs_property_t *quality = obs_properties_add_list(properties, kQualitySetting,
+							  obs_module_text("Source.Quality"), OBS_COMBO_TYPE_LIST,
+							  OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(quality, obs_module_text("Source.Quality.Default"), 0);
+	obs_property_list_add_int(quality, obs_module_text("Settings.Quality.Low"), 1500);
+	obs_property_list_add_int(quality, obs_module_text("Settings.Quality.Standard"), 2500);
+	obs_property_list_add_int(quality, obs_module_text("Settings.Quality.High"), 4000);
+	obs_property_list_add_int(quality, obs_module_text("Settings.Quality.VeryHigh"), 8000);
+	obs_property_set_long_description(quality, obs_module_text("Source.Quality.Tooltip"));
+
+	obs_property_t *offline = obs_properties_add_list(properties, kOfflineModeSetting,
+							  obs_module_text("Source.Offline"), OBS_COMBO_TYPE_LIST,
+							  OBS_COMBO_FORMAT_INT);
+	obs_property_list_add_int(offline, obs_module_text("Source.Offline.Nothing"), 0);
+	obs_property_list_add_int(offline, obs_module_text("Source.Offline.LastFrame"), 1);
+	obs_property_list_add_int(offline, obs_module_text("Source.Offline.Image"), 2);
+	obs_property_set_long_description(offline, obs_module_text("Source.Offline.Tooltip"));
+	obs_property_set_modified_callback(offline, offlineModeChanged);
+
+	obs_properties_add_path(properties, kOfflineImageSetting, obs_module_text("Source.Offline.ImageFile"),
+				OBS_PATH_FILE, obs_module_text("Source.Offline.ImageFilter"), nullptr);
 	return properties;
 }
 
@@ -107,6 +172,7 @@ void registerGuestSource()
 	info.destroy = sourceDestroy;
 	info.update = sourceUpdate;
 	info.get_properties = sourceProperties;
+	info.get_defaults = sourceDefaults;
 	obs_register_source(&info);
 }
 

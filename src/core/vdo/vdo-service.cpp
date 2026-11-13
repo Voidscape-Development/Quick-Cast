@@ -48,6 +48,14 @@ constexpr auto kStatsInterval = std::chrono::milliseconds(1000);
 constexpr auto kReplayDelay = std::chrono::milliseconds(3000);
 constexpr auto kDisconnectGrace = std::chrono::milliseconds(8000);
 constexpr auto kNegotiationResendWindow = std::chrono::seconds(10);
+/** How long to wait for a guest to answer a re-request before concluding they have left the show. */
+constexpr auto kReplayGiveUp = std::chrono::milliseconds(10000);
+/**
+ * A connected guest that sends no media at all for this long is gone. Browsers keep sending (silence, black frames)
+ * while muted, and the server does not announce departures, so without this a guest who closes their tab would
+ * linger until ICE gives up tens of seconds later.
+ */
+constexpr int64_t kMediaSilenceUs = 5'000'000;
 constexpr uint8_t kReturnVideoPayloadType = 96;
 constexpr uint8_t kReturnAudioPayloadType = 111;
 constexpr size_t kMaxPendingCandidates = 100;
@@ -807,13 +815,23 @@ public:
 				return; // guest really left
 			if (!seat->uuid.empty() && self->inbound_.count(seat->uuid))
 				return; // already back
+			// The guest stays "offline" in the UI until they actually answer: this request is a guess that
+			// they are still in the room, and showing "connecting" for someone who left would mislead.
 			QC_LOG_INFO("re-requesting stream for guest '%s'", seat->seat.name.c_str());
-			if (seat->status.connection == GuestConnection::Offline) {
-				seat->status.connection = GuestConnection::Connecting;
-				self->notifyStatus(*seat);
-			}
 			if (self->signaling_)
 				self->signaling_->send(buildPlay(seat->wireStreamId));
+
+			const std::string wireStreamId = seat->wireStreamId;
+			self->executor_.postDelayed(kReplayGiveUp, [weak, seatId, wireStreamId] {
+				auto strong = weak.lock();
+				if (!strong || !strong->running_)
+					return;
+				auto current = strong->findSeat(seatId);
+				if (!current || (!current->uuid.empty() && strong->inbound_.count(current->uuid)))
+					return; // they came back
+				// No answer: they have left. The server announces them again if they return.
+				strong->roomStreams_.erase(wireStreamId);
+			});
 		});
 	}
 
@@ -1504,8 +1522,28 @@ public:
 		});
 	}
 
+	/** Closes connections to guests that are still "connected" at the transport level but have stopped sending. */
+	void dropSilentGuests()
+	{
+		const int64_t nowUs = monotonicNowUs();
+		std::vector<std::string> silent;
+		for (const auto &[uuid, peer] : inbound_) {
+			int64_t latest = 0;
+			for (const auto &[mid, entry] : peer->tracks) {
+				if (entry.receiver)
+					latest = std::max(latest, entry.receiver->lastPacketUs());
+			}
+			// Only once media has flowed: negotiation legitimately takes a while before the first packet.
+			if (latest > 0 && nowUs - latest > kMediaSilenceUs)
+				silent.push_back(uuid);
+		}
+		for (const std::string &uuid : silent)
+			closeInbound(uuid, "stopped sending");
+	}
+
 	void collectStats()
 	{
+		dropSilentGuests();
 		const double seconds = std::chrono::duration<double>(kStatsInterval).count();
 		for (auto &[id, seat] : seats_) {
 			auto it = inbound_.find(seat->uuid);

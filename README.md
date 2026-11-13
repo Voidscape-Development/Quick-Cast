@@ -30,6 +30,9 @@ Other things the dock can do:
   renames them, refreshes their video, disconnects them, or removes them.
 - Guest sources are ordinary OBS sources named `Guest: <name>`. You can crop, filter, and arrange them like any
   other source, and add them to more scenes with **Add → Quick Cast Guest**.
+- A guest source's **Properties** hold two per-guest options: a video quality that overrides the show's default for
+  that guest, and what the source shows while they are offline (nothing, their last frame, or an image such as a
+  "be right back" card).
 
 ### What guests see and hear (the return feed)
 
