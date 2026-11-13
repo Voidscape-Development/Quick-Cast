@@ -1,6 +1,6 @@
 /*
-Plugin Name
-Copyright (C) <Year> <Developer> <Email Address>
+Quick Cast - remote guests for OBS Studio
+Copyright (C) 2026 Voidscape Development
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -16,19 +16,18 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
+#pragma once
+
 #include <obs-module.h>
-#include <plugin-support.h>
 
-OBS_DECLARE_MODULE()
-OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
+#include <QString>
 
-bool obs_module_load(void)
+namespace qc {
+
+/** Looks up a string in the plugin's locale files. */
+inline QString tr_(const char *key)
 {
-	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
-	return true;
+	return QString::fromUtf8(obs_module_text(key));
 }
 
-void obs_module_unload(void)
-{
-	obs_log(LOG_INFO, "plugin unloaded");
-}
+} // namespace qc
