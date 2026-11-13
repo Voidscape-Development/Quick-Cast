@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "settings-dialog.hpp"
 
 #include "obs/scene-integration.hpp"
+#include "source-lists.hpp"
 #include "ui-helpers.hpp"
 #include "ui-style.hpp"
 #include "vdo/identity.hpp"
@@ -51,57 +52,6 @@ QLabel *hint(const QString &text, QWidget *parent)
 	label->setWordWrap(true);
 	ui::styleMuted(label);
 	return label;
-}
-
-/** Sources first, then scenes: everything that produces video, excluding the guests themselves. */
-QStringList videoSourceNames()
-{
-	QStringList scenes;
-	QStringList sources;
-	struct Lists {
-		QStringList *scenes;
-		QStringList *sources;
-	} lists{&scenes, &sources};
-
-	const auto collect = [](void *param, obs_source_t *source) {
-		auto *out = static_cast<Lists *>(param);
-		const char *name = obs_source_get_name(source);
-		if (!name || !*name || (obs_source_get_output_flags(source) & OBS_SOURCE_VIDEO) == 0)
-			return true;
-		const char *id = obs_source_get_unversioned_id(source);
-		if (id && strcmp(id, kGuestSourceId) == 0)
-			return true;
-		if (obs_source_get_type(source) == OBS_SOURCE_TYPE_SCENE)
-			out->scenes->append(QString::fromUtf8(name));
-		else
-			out->sources->append(QString::fromUtf8(name));
-		return true;
-	};
-	obs_enum_scenes(collect, &lists);
-	obs_enum_sources(collect, &lists);
-	scenes.sort(Qt::CaseInsensitive);
-	sources.sort(Qt::CaseInsensitive);
-	return sources + scenes;
-}
-
-/** Every source that produces audio, excluding the guests themselves (they must not be sent back to guests). */
-QStringList audioSourceNames()
-{
-	QStringList names;
-	obs_enum_sources(
-		[](void *param, obs_source_t *source) {
-			const char *name = obs_source_get_name(source);
-			const char *id = obs_source_get_unversioned_id(source);
-			if (!name || !*name || (obs_source_get_output_flags(source) & OBS_SOURCE_AUDIO) == 0)
-				return true;
-			if (id && strcmp(id, kGuestSourceId) == 0)
-				return true;
-			static_cast<QStringList *>(param)->append(QString::fromUtf8(name));
-			return true;
-		},
-		&names);
-	names.sort(Qt::CaseInsensitive);
-	return names;
 }
 
 void selectData(QComboBox *combo, int value)
@@ -243,20 +193,23 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	returnEnabled_->setChecked(settings.returnFeedEnabled);
 	returnBody->addWidget(returnEnabled_);
 
+	// One click for the arrangement that suits a fellow streamer as a guest; everything it sets stays editable.
+	auto *presetButton = new QPushButton(tr_("Settings.Return.Preset"), this);
+	presetButton->setToolTip(tr_("Settings.Return.Preset.Tooltip"));
+	ui::styleButton(presetButton, ui::ButtonKind::Secondary);
+	auto *presetRow = new QHBoxLayout();
+	presetRow->addWidget(presetButton);
+	presetRow->addStretch(1);
+	returnBody->addLayout(presetRow);
+	returnBody->addWidget(hint(tr_("Settings.Return.PresetHint"), this));
+	connect(presetButton, &QPushButton::clicked, this, &SettingsDialog::applyCoStreamingPreset);
+
 	returnVideo_ = new QComboBox(this);
 	returnVideo_->addItem(tr_("Settings.Return.Video.Program"), QString());
 	for (const QString &name : videoSourceNames())
 		returnVideo_->addItem(name, name);
-	{
-		// Keep a configured source selectable even if it is not in the current scene collection.
-		const QString current = QString::fromStdString(settings.returnVideoSource);
-		int index = returnVideo_->findData(current);
-		if (index < 0) {
-			returnVideo_->addItem(current, current);
-			index = returnVideo_->count() - 1;
-		}
-		returnVideo_->setCurrentIndex(index);
-	}
+	// Keeps a configured source selectable even if it is not in the current scene collection.
+	selectSourceName(returnVideo_, QString::fromStdString(settings.returnVideoSource));
 
 	// Second feed: off, the program, or any source. "Off" is a null variant; the program is an empty name.
 	secondVideo_ = new QComboBox(this);
@@ -326,15 +279,7 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	returnAudio_->addItem(tr_("Settings.Return.Audio.Track"), QString());
 	for (const QString &name : audioSourceNames())
 		returnAudio_->addItem(name, name);
-	{
-		const QString current = QString::fromStdString(settings.returnAudioSource);
-		int index = returnAudio_->findData(current);
-		if (index < 0) {
-			returnAudio_->addItem(current, current);
-			index = returnAudio_->count() - 1;
-		}
-		returnAudio_->setCurrentIndex(index);
-	}
+	selectSourceName(returnAudio_, QString::fromStdString(settings.returnAudioSource));
 	audio->addRow(tr_("Settings.Return.Audio"), returnAudio_);
 	returnTrack_ = new QComboBox(this);
 	for (int track = 1; track <= 6; ++track)
@@ -372,6 +317,46 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	connect(secondVideo_, &QComboBox::currentIndexChanged, this, syncReturnControls);
 	connect(returnAudio_, &QComboBox::currentIndexChanged, this, syncReturnControls);
 	syncReturnControls();
+
+	// -------------------------------------------------------------------------------------- Collaboration
+	QVBoxLayout *collabBody = nullptr;
+	QWidget *collabPage = makePage("Settings.Collab.Heading", "Settings.Collab.Purpose", collabBody);
+
+	// Before the user has chosen anything, show what joining would suggest rather than "program".
+	const QString collabCamera = QString::fromStdString(settings.collabConfigured ? settings.collabVideoSource
+										      : detectCameraSourceName());
+	const QString collabMicrophone = QString::fromStdString(
+		settings.collabConfigured ? settings.collabAudioSource : detectMicrophoneSourceName());
+
+	QFormLayout *collabSend = makeGroup(collabBody, "Settings.Collab.Send");
+	collabVideo_ = new QComboBox(this);
+	collabVideo_->addItem(tr_("Join.Camera.Program"), QString());
+	for (const QString &name : videoSourceNames())
+		collabVideo_->addItem(name, name);
+	selectSourceName(collabVideo_, collabCamera);
+	collabAudio_ = new QComboBox(this);
+	collabAudio_->addItem(tr_("Join.Microphone.Track").arg(settings.returnAudioTrack), QString());
+	for (const QString &name : audioSourceNames())
+		collabAudio_->addItem(name, name);
+	selectSourceName(collabAudio_, collabMicrophone);
+	collabResolution_ = makeResolution(settings.collabHeight);
+	collabBitrate_ = makeBitrate(settings.collabVideoBitrateKbps);
+	collabSend->addRow(tr_("Join.Camera"), collabVideo_);
+	collabSend->addRow(tr_("Join.Microphone"), collabAudio_);
+	collabSend->addRow(tr_("Settings.Return.Quality"), qualityRow(collabResolution_, collabBitrate_));
+	collabSend->addRow(hint(tr_("Settings.Collab.SendHint"), this));
+
+	QFormLayout *collabShare = makeGroup(collabBody, "Settings.Collab.Second");
+	collabSecond_ = new QComboBox(this);
+	collabSecond_->addItem(tr_("Join.Second.Nothing"), QString());
+	for (const QString &name : videoSourceNames())
+		collabSecond_->addItem(name, name);
+	selectSourceName(collabSecond_, settings.collabSecondEnabled
+						? QString::fromStdString(settings.collabSecondSource)
+						: QString());
+	collabShare->addRow(tr_("Settings.Return.Source"), collabSecond_);
+	collabShare->addRow(hint(tr_("Settings.Collab.SecondHint"), this));
+	collabBody->addStretch(1);
 
 	// ---------------------------------------------------------------------------------------------- Network
 	QVBoxLayout *networkBody = nullptr;
@@ -412,6 +397,7 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	addPage("Settings.Show", showPage);
 	addPage("Settings.Guests", guestPage);
 	addPage("Settings.Return", returnPage);
+	addPage("Settings.Collab", collabPage);
 	addPage("Settings.Network", networkPage);
 	connect(navigation, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
 	navigation->setCurrentRow(0);
@@ -460,6 +446,28 @@ void SettingsDialog::regenerateLinks()
 	password_->setText(QString::fromStdString(vdo::generatePassword()));
 }
 
+void SettingsDialog::applyCoStreamingPreset()
+{
+	// A fellow streamer puts us in their own layout, so they want our camera and voice on their own, not our
+	// finished picture; the program goes along as a second tile for following the show.
+	const QString camera = collabVideo_->currentData().toString().isEmpty()
+				       ? QString::fromStdString(detectCameraSourceName())
+				       : collabVideo_->currentData().toString();
+	const QString microphone = collabAudio_->currentData().toString().isEmpty()
+					   ? QString::fromStdString(detectMicrophoneSourceName())
+					   : collabAudio_->currentData().toString();
+	if (camera.isEmpty()) {
+		QMessageBox::information(this, tr_("Settings.Title"), tr_("Settings.Return.Preset.NoCamera"));
+		return;
+	}
+	returnEnabled_->setChecked(true);
+	selectSourceName(returnVideo_, camera);
+	if (!microphone.isEmpty())
+		selectSourceName(returnAudio_, microphone);
+	// Index 0 is "off"; index 1 is the program.
+	secondVideo_->setCurrentIndex(1);
+}
+
 void SettingsDialog::save()
 {
 	Settings settings = controller_->settings();
@@ -496,6 +504,14 @@ void SettingsDialog::save()
 	settings.returnVideoBitrateKbps = static_cast<uint32_t>(returnBitrate_->value());
 	settings.secondHeight = static_cast<uint32_t>(secondResolution_->currentData().toInt());
 	settings.secondVideoBitrateKbps = static_cast<uint32_t>(secondBitrate_->value());
+
+	settings.collabConfigured = true;
+	settings.collabVideoSource = collabVideo_->currentData().toString().toStdString();
+	settings.collabAudioSource = collabAudio_->currentData().toString().toStdString();
+	settings.collabSecondSource = collabSecond_->currentData().toString().toStdString();
+	settings.collabSecondEnabled = !settings.collabSecondSource.empty();
+	settings.collabHeight = static_cast<uint32_t>(collabResolution_->currentData().toInt());
+	settings.collabVideoBitrateKbps = static_cast<uint32_t>(collabBitrate_->value());
 
 	settings.turnUrl = turnUrl_->text().trimmed().toStdString();
 	settings.turnUsername = turnUsername_->text().trimmed().toStdString();

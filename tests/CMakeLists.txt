@@ -11,6 +11,7 @@ add_executable(
   test-rtcp.cpp
   test-sdp-utils.cpp
   test-sync-clock.cpp
+  test-tile-layout.cpp
   test-video-depacketizer.cpp
 )
 target_link_libraries(quick-cast-tests PRIVATE quick-cast-core GTest::gtest GTest::gtest_main)

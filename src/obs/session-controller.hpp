@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include "guest-player.hpp"
+#include "layout/tile-layout.hpp"
 #include "return-output.hpp"
 #include "session/guest-service.hpp"
 #include "settings-store.hpp"
@@ -34,6 +35,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 namespace qc {
 
+/** Outcome of asking to join the show an invite link leads to. */
+enum class JoinResult {
+	Joining,
+	/** The text is not an invite link. */
+	NotAnInvite,
+	/** The link leads to the user's own show. */
+	OwnShow,
+};
+
 /** A guest as the UI sees them: their seat plus live status. */
 struct GuestView {
 	GuestSeat seat;
@@ -43,6 +53,9 @@ struct GuestView {
 /**
  * The plugin's hub: owns the settings, the guest service, the per-guest players and the return feed, and exposes
  * all of it to the dock as a small UI-thread API with Qt signals.
+ *
+ * At any moment the plugin is in at most one show: the user's own, which they host, or a collaborator's, which they
+ * joined as a guest. The "guests" the UI lists are the other people in whichever show that is.
  *
  * Except where noted, methods must be called on the UI thread.
  */
@@ -70,6 +83,38 @@ public:
 	ServiceState state() const { return state_; }
 	QString stateDetail() const { return stateDetail_; }
 	bool showRunning() const { return state_ != ServiceState::Stopped && state_ != ServiceState::Failed; }
+
+	// --- Someone else's show ---
+	/** Whether the text is an invite link Quick Cast can join. */
+	bool isInviteLink(const QString &link) const;
+	/**
+	 * Takes our seat in the show an invite link leads to, ending our own show first if it is running. The show is
+	 * remembered as a collaborator; `name` labels it and may be empty.
+	 */
+	JoinResult joinShow(const QString &link, const QString &name);
+	/** Joins a remembered show again. */
+	bool joinCollaborator(const std::string &collaboratorId);
+	/** True while we are a guest in someone else's show (stopShow leaves it). */
+	bool joined() const { return !activeCollaborator_.empty(); }
+	/** Whether the most recent show was someone else's; tells the UI how to word an error after it ended. */
+	bool lastShowWasJoined() const { return lastShowWasJoined_; }
+	/** What to call the show we are in, or the given collaborator's. */
+	QString collaboratorName(const std::string &collaboratorId) const;
+	QString joinedShowName() const { return collaboratorName(activeCollaborator_); }
+	/** Remembered shows, most recently joined first. */
+	std::vector<Collaborator> collaborators() const;
+	void renameCollaborator(const std::string &collaboratorId, const QString &name);
+	/** Forgets a show and the people met in it. Leaves it first if we are in it. */
+	void removeCollaborator(const std::string &collaboratorId);
+
+	// --- Layouts ---
+	/**
+	 * Arranges the guests in the current scene (and, for the layouts that fill the canvas, the user's own camera
+	 * if they asked for that and it is in the scene). When no guest is in the scene yet, everyone who is connected
+	 * is added first. Returns how many items were placed; 0 means there was nothing to arrange.
+	 */
+	size_t applyLayout(LayoutKind kind);
+	void setLayoutIncludesCamera(bool include);
 
 	// --- Guests ---
 	std::vector<GuestView> guests() const;
@@ -100,8 +145,10 @@ public:
 
 signals:
 	void stateChanged();
-	/** Guests were added, removed or renamed. */
+	/** Guests were added, removed or renamed, or the show they belong to changed. */
 	void guestListChanged();
+	/** Remembered shows were added, removed or renamed. */
+	void collaboratorsChanged();
 	void guestStatusChanged(const QString &guestId);
 
 private:
@@ -111,6 +158,15 @@ private:
 	void onSeatCreated(const GuestSeat &seat) override;
 	void onReturnFeedDemand(bool wanted) override;
 
+	/** Seats of the show we are in: our own show's unless we have joined someone else's. */
+	const std::vector<GuestSeat> &activeSeats() const;
+	/** The list a seat lives in (ours, or one collaborator's), whichever show is active. */
+	std::vector<GuestSeat> *seatListFor(const std::string &guestId);
+	GuestSeat *findSeat(const std::string &guestId);
+	const GuestSeat *findSeat(const std::string &guestId) const;
+	bool isCollaboratorSeat(const std::string &guestId) const;
+	void connectAs(const ShowConfig &config);
+	void configureFeeds();
 	std::shared_ptr<GuestPlayer> ensurePlayer(const std::string &guestId);
 	std::shared_ptr<GuestPlayer> findPlayer(const std::string &guestId) const;
 	void excludeFromReturnAudio(obs_source_t *source) const;
@@ -125,6 +181,9 @@ private:
 
 	ServiceState state_ = ServiceState::Stopped;
 	QString stateDetail_;
+	/** The collaborator whose show we are in; empty while hosting or idle. */
+	std::string activeCollaborator_;
+	bool lastShowWasJoined_ = false;
 	std::map<std::string, GuestStatus> statuses_;
 	bool returnDemand_ = false;
 	/** Read by guest sources on other threads. */

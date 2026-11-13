@@ -16,10 +16,14 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
-// Developer tool: hosts a show from the command line and reports what arrives.
+// Developer tool: hosts a show from the command line, or joins someone else's, and reports what arrives.
 //
 //   quick-cast-probe --room NAME [--password PW] [--seat ID:Name]... [--seconds N]
 //                    [--dump DIR] [--return-h264 FILE --return-fps N] [--no-return] [--kick-after N]
+//   quick-cast-probe --join LINK [--name NAME] [--seconds N] [--dump DIR] [--return-h264 FILE]
+//
+// --join takes a seat in the show an invite link leads to, the way the plugin's "Join a show" does. Run one probe
+// as the host and another with one of the links it prints to exercise both ends without a browser.
 //
 // --dump writes each guest's raw video elementary stream to DIR/<seat>.h264|.ivf-less vp8 frames and the Opus
 // packet sizes are only counted. --return-h264 loops an Annex-B file as the return feed (one access unit per frame,
@@ -179,6 +183,7 @@ int main(int argc, char **argv)
 	int returnFps = 30;
 	bool verbose = false;
 	int kickAfter = 0;
+	std::string joinLink;
 
 	for (int i = 1; i < argc; ++i) {
 		const std::string arg = argv[i];
@@ -207,6 +212,10 @@ int main(int argc, char **argv)
 			config.defaultQuality.maxVideoBitrateKbps = static_cast<uint32_t>(std::stoi(next()));
 		else if (arg == "--verbose")
 			verbose = true;
+		else if (arg == "--join")
+			joinLink = next();
+		else if (arg == "--name")
+			config.hostName = next();
 		else if (arg == "--kick-after")
 			kickAfter = std::stoi(next());
 		else if (arg == "--seat") {
@@ -216,9 +225,10 @@ int main(int argc, char **argv)
 							 colon == std::string::npos ? value : value.substr(colon + 1)});
 		}
 	}
-	if (config.room.empty()) {
+	if (config.room.empty() && joinLink.empty()) {
 		std::fprintf(stderr,
-			     "usage: quick-cast-probe --room NAME [--password PW] [--seat ID:Name] [--seconds N]\n");
+			     "usage: quick-cast-probe --room NAME [--password PW] [--seat ID:Name] [--seconds N]\n"
+			     "       quick-cast-probe --join LINK [--name NAME] [--seconds N]\n");
 		return 2;
 	}
 
@@ -236,9 +246,25 @@ int main(int argc, char **argv)
 	listener.dumpDir = dumpDir;
 	service.setListener(&listener);
 
-	for (const GuestSeat &seat : config.seats)
-		std::printf("[link] %s -> %s\n", seat.name.c_str(), service.inviteLink(config, seat).c_str());
-	std::printf("[link] open -> %s\n", service.openInviteLink(config).c_str());
+	if (!joinLink.empty()) {
+		const auto target = service.parseInviteLink(joinLink);
+		if (!target) {
+			std::fprintf(stderr, "not an invite link: %s\n", joinLink.c_str());
+			return 2;
+		}
+		config.role = ShowRole::Guest;
+		config.room = target->room;
+		config.password = target->password;
+		config.ownSeatId = target->seatId;
+		config.seatPrefix = "joined:";
+		config.seats.clear();
+		std::printf("[join] room=%s seat=%s\n", config.room.c_str(),
+			    config.ownSeatId.empty() ? "(open link)" : config.ownSeatId.c_str());
+	} else {
+		for (const GuestSeat &seat : config.seats)
+			std::printf("[link] %s -> %s\n", seat.name.c_str(), service.inviteLink(config, seat).c_str());
+		std::printf("[link] open -> %s\n", service.openInviteLink(config).c_str());
+	}
 	std::fflush(stdout);
 
 	service.start(config);

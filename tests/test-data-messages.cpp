@@ -100,3 +100,10 @@ TEST(DataMessages, DirectorCommands)
 	EXPECT_EQ(buildBye().dump(), R"({"bye":true})");
 	EXPECT_EQ(buildChangeLabel("Zed")["value"], "Zed");
 }
+
+TEST(DataMessages, HangupFromTheDirector)
+{
+	EXPECT_TRUE(parsePeerDataMessage(Json::parse(R"({"hangup":true})")).hangup);
+	EXPECT_FALSE(parsePeerDataMessage(Json::parse(R"({"hangup":false})")).hangup);
+	EXPECT_FALSE(parsePeerDataMessage(Json::parse(R"({"bye":true})")).hangup);
+}

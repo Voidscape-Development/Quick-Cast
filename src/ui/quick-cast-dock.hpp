@@ -24,7 +24,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QWidget>
 
 #include <map>
+#include <vector>
 
+class QHBoxLayout;
 class QLabel;
 class QPushButton;
 class QTimer;
@@ -33,6 +35,7 @@ class QVBoxLayout;
 
 namespace qc {
 
+class CollaboratorRow;
 class GuestRow;
 
 /**
@@ -40,6 +43,9 @@ class GuestRow;
  *
  * Top to bottom it follows the host's own sequence: is the show running, who is here, bring someone new in. Exactly
  * one button is emphasised at a time, and it is always the next sensible step.
+ *
+ * While the show is off the dock also offers the other way in: joining someone else's show, either with a link or
+ * with one click on a show joined before. Once joined, the same list shows the people in that show instead.
  */
 class QuickCastDock final : public QWidget {
 	Q_OBJECT
@@ -52,6 +58,9 @@ protected:
 
 private:
 	void rebuildGuests();
+	void rebuildCollaborators();
+	void joinShow();
+	void applyLayout(LayoutKind kind);
 	void refreshGuests();
 	void refreshState();
 	void restyle();
@@ -68,6 +77,9 @@ private:
 	QLabel *headline_;
 	QLabel *subline_;
 	QPushButton *showButton_;
+	QPushButton *joinButton_;
+	QToolButton *layoutButton_;
+	QLabel *collaboratorHeading_;
 	QLabel *noticeLabel_;
 	QWidget *emptyState_;
 	QLabel *emptyTitle_;
@@ -78,11 +90,13 @@ private:
 	QPushButton *inviteButton_;
 	QToolButton *openLinkButton_;
 	QToolButton *settingsButton_;
+	QHBoxLayout *footerLayout_;
 	QTimer *refreshTimer_;
 	QTimer *noticeTimer_;
 	QElapsedTimer liveClock_;
 	bool restyling_ = false;
 	std::map<std::string, GuestRow *> rows_;
+	std::vector<CollaboratorRow *> collaboratorRows_;
 };
 
 } // namespace qc

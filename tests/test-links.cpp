@@ -53,3 +53,53 @@ TEST(Links, DisabledPasswordAndCustomBase)
 	options.label = "A&B";
 	EXPECT_EQ(buildInviteLink(options), "https://example.com/app/?room=r&password=false&label=A%26B");
 }
+
+TEST(Links, ParsesWhatWeBuild)
+{
+	InviteOptions options;
+	options.room = "amber_falcon_482";
+	options.password = "s3cret & more";
+	options.streamId = "k3x9a0qzab";
+	options.label = "Alice Smith";
+	const auto parsed = parseInviteLink(buildInviteLink(options));
+	ASSERT_TRUE(parsed.has_value());
+	EXPECT_EQ(parsed->room, "amber_falcon_482");
+	EXPECT_EQ(parsed->password, "s3cret & more");
+	EXPECT_EQ(parsed->streamId, "k3x9a0qzab");
+	EXPECT_EQ(parsed->label, "Alice Smith");
+}
+
+TEST(Links, ParsesOpenLink)
+{
+	InviteOptions options;
+	options.room = "my room";
+	const auto parsed = parseInviteLink(buildInviteLink(options));
+	ASSERT_TRUE(parsed.has_value());
+	EXPECT_EQ(parsed->room, "my_room");
+	EXPECT_TRUE(parsed->password.empty());
+	EXPECT_TRUE(parsed->streamId.empty());
+	EXPECT_TRUE(parsed->label.empty());
+}
+
+TEST(Links, ParsesHandWrittenLinks)
+{
+	// Short parameter names, mixed case, a fragment, and trailing whitespace from a chat client.
+	const auto parsed = parseInviteLink("https://vdo.ninja/?R=Game+Night&pw=false&ID=bob%5F1&l=Bob#top \n");
+	ASSERT_TRUE(parsed.has_value());
+	EXPECT_EQ(parsed->room, "Game_Night");
+	EXPECT_EQ(parsed->password, "false");
+	EXPECT_EQ(parsed->streamId, "bob_1");
+	EXPECT_EQ(parsed->label, "Bob");
+}
+
+TEST(Links, RejectsWhatIsNotAnInvite)
+{
+	EXPECT_FALSE(parseInviteLink("").has_value());
+	EXPECT_FALSE(parseInviteLink("hello there").has_value());
+	EXPECT_FALSE(parseInviteLink("https://vdo.ninja/").has_value());
+	// A link straight to one stream, with no room to join.
+	EXPECT_FALSE(parseInviteLink("https://vdo.ninja/?view=abc123").has_value());
+	// The host's own control link must not be mistaken for a seat in the show.
+	EXPECT_FALSE(parseInviteLink("https://vdo.ninja/?director=amber_falcon_482&password=x").has_value());
+	EXPECT_FALSE(parseInviteLink("https://vdo.ninja/?room=&push=abc").has_value());
+}

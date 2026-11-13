@@ -18,9 +18,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #pragma once
 
+#include "layout/tile-layout.hpp"
+
 #include <obs.hpp>
 
 #include <string>
+#include <vector>
 
 namespace qc {
 
@@ -40,5 +43,19 @@ bool isInCurrentScene(obs_source_t *source);
 /** Adds the source to the scene currently being edited, optionally scaled to fill the canvas. */
 bool addToCurrentScene(obs_source_t *source, bool fitToCanvas);
 bool removeFromCurrentScene(obs_source_t *source);
+
+/**
+ * Arranges the given sources in the scene currently being edited: the first item of each goes into one tile of the
+ * layout, in the order given, scaled to fit inside it. Sources that are not in the scene, or whose item the user
+ * has locked, are left out and the layout is computed for the rest. Returns how many items were placed.
+ */
+size_t arrangeInCurrentScene(const std::vector<obs_source_t *> &sources, LayoutKind kind);
+
+/**
+ * Best guess at the user's own camera or microphone, for pre-filling choices they would otherwise have to make:
+ * the first capture-device source, preferring one in the current scene. Empty when there is none.
+ */
+std::string detectCameraSourceName();
+std::string detectMicrophoneSourceName();
 
 } // namespace qc

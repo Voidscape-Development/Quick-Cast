@@ -3,6 +3,9 @@
 Quick Cast is an OBS Studio plugin for bringing remote guests into a broadcast. You invite someone with a link, they
 open it in a browser, and they show up in a dock inside OBS where one click puts them on screen.
 
+If your guest streams with Quick Cast too, they can paste the same link into their own OBS instead of a browser.
+Then you each get the other as a source: one link, and both streams have both people.
+
 Guest video and audio are received natively inside OBS over WebRTC. There is no browser source and no separate
 window to capture. Signaling and the guest-side web app are currently provided by [VDO.Ninja](https://vdo.ninja);
 the plugin is structured so a first-party service can replace it later.
@@ -34,6 +37,39 @@ Other things the dock can do:
   that guest, and what the source shows while they are offline (nothing, their last frame, or an image such as a
   "be right back" card).
 
+### Arranging guests
+
+The **layout button** above the guest list arranges the guests in the current scene:
+
+- **Side by side** gives everyone an equal column across the canvas.
+- **Grid** makes the most even grid that holds everyone.
+- **Picture in picture** stacks the guests as small tiles in the bottom-right corner, on top of whatever else the
+  scene shows.
+
+If no guest is in the scene yet, everyone who is connected is added first. With **Include my camera** ticked, side
+by side and grid also give your own camera a tile when it is in the scene. Each guest is fitted inside their tile
+without cropping, items you have locked are left where they are, and you can move or resize anything afterwards.
+
+### Joining another streamer's show
+
+1. Ask them for an invite link (a personal one or their open link).
+2. Click **Join a show…** in the dock and paste it. Quick Cast fills it in for you if it is already on your
+   clipboard.
+3. Check **What you send**: your camera, your microphone and, optionally, one more source such as your gameplay.
+4. Click **Join**. The host and their other guests appear in the dock; add them to a scene like any guest.
+
+A few things worth knowing:
+
+- Joining is the alternative to hosting. You are in one show at a time, so the button is there while your own
+  show is off.
+- Send your **camera**, not the program output. Once the host is in your scene, your program contains them, and
+  they would get their own picture back.
+- The people in the show are never sent back to it, in either direction, so nobody hears an echo of themselves.
+- Every show you join is remembered under **Shows you've joined**. **Join** on its card takes you back in with the
+  same camera and microphone, with no link to find. The host's source in your scenes is the same one each time.
+- If you host a fellow streamer, **Settings → What guests see → Set up for co-streaming** sends them your camera
+  and microphone on their own, with the program as a second feed.
+
 ### What guests see and hear (the return feed)
 
 While at least one guest is connected, Quick Cast sends them your program output and one OBS audio track so they can
@@ -61,7 +97,8 @@ The **gear button** at the bottom of the dock:
 | --- | --- |
 | Show | Your display name, the show name and password that every invite link is built from, a button to generate new ones if a link leaks, and "start the show when OBS starts". |
 | Guest video | Video quality requested from guests (1.5 to 8 Mbps), preferred codec (H.264, VP8 or VP9), hardware decoding, and whether new guests are fitted to the canvas. |
-| What guests see | On/off, the main feed and optional second feed (program or a chosen source such as your camera), audio track, resolution, and bitrate. |
+| What guests see | On/off, the main feed and optional second feed (program or a chosen source such as your camera), audio track, resolution, and bitrate. A button sets all of it up for co-streaming. |
+| Joining shows | What you send when you join another streamer's show: camera, microphone, quality, and an optional extra source. |
 | Network | An optional TURN relay for networks that block direct connections. |
 
 Settings are stored in the plugin's config directory (`plugin_config/quick-cast/settings.json`) and are shared by all
@@ -80,6 +117,10 @@ scene collections.
 - One camera per guest. A guest who shares their screen from the web app appears as a second entry in the list.
 - libobs cannot request a keyframe on demand, so the return feed uses a one-second keyframe interval. A guest who
   joins waits up to a second for the first picture.
+- A show is a mesh: everyone in it connects to everyone else, and each feed is uploaded once per person watching
+  it. On a home connection that is comfortable for about four or five streamers.
+- Layouts fit each guest inside their tile; they do not crop a wide camera to fill a tall column.
+- A second source you share when joining a show appears to the host as a separate person.
 - Removing a guest with **Disconnect** relies on Quick Cast holding the director role in the room. If someone else
   has already claimed the same show name, guests still connect but cannot be disconnected remotely.
 
@@ -124,6 +165,9 @@ receives. It is handy for checking interoperability against a real browser guest
 ./build_x86_64/tests/quick-cast-probe --room my_test_room --password secret --seat alice:Alice
 ```
 
+With `--join LINK` the probe takes a seat in a show instead of hosting one, as the plugin's **Join a show** does.
+One probe hosting and a second joining with a link the first one printed exercises both ends without a browser.
+
 ## How it is put together
 
 ```
@@ -132,6 +176,8 @@ src/
     session/            GuestService: the interface between Quick Cast and a guest service.
     vdo/                The VDO.Ninja implementation of GuestService: signaling, room/director
                         logic, ID hashing and SDP encryption, one peer connection per direction.
+                        Plays either role in a show: host of our own, or guest in someone else's.
+    layout/             Tile geometry for the scene layouts.
     rtp/                Receive path: reordering and NACK, H.264/VP8 depacketizing, RTCP
                         feedback (receiver reports, REMB, PLI), sender-report based A/V sync.
     util/               Crypto wrappers, serial executor, logging.
