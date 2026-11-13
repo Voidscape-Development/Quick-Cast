@@ -44,6 +44,8 @@ follow the show. Two things to know:
   and bitrate.
 - Guests hear **audio track 6** by default (configurable). Quick Cast automatically removes guest sources from that
   track, so nobody hears a delayed echo of themselves. Guests hear each other directly, peer to peer.
+- Instead of a track you can pick **one audio source** (Settings → What guests see → Audio), for example just your
+  microphone. Guests then hear only that source, with its filters, volume and mute applied.
 - The return feed has its own lightweight encoder (x264 720p, 1.5 Mbps by default), separate from your stream and
   recording encoders. It only runs while a guest is watching. While it runs, OBS treats an output as active, so
   video settings are locked just as they are while streaming.

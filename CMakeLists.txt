@@ -76,6 +76,8 @@ target_sources(
     src/obs/session-controller.hpp
     src/obs/settings-store.cpp
     src/obs/settings-store.hpp
+    src/obs/source-audio.cpp
+    src/obs/source-audio.hpp
     src/ui/guest-row.cpp
     src/ui/guest-row.hpp
     src/ui/invite-dialog.cpp

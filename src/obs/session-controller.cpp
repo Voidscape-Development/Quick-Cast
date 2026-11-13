@@ -156,6 +156,7 @@ void SessionController::applySettings(const Settings &settings)
 	const bool returnChanged = settings.returnAudioTrack != settings_.returnAudioTrack ||
 				   settings.returnHeight != settings_.returnHeight ||
 				   settings.returnVideoSource != settings_.returnVideoSource ||
+				   settings.returnAudioSource != settings_.returnAudioSource ||
 				   settings.secondFeedEnabled != settings_.secondFeedEnabled ||
 				   settings.secondVideoSource != settings_.secondVideoSource ||
 				   settings.secondHeight != settings_.secondHeight ||

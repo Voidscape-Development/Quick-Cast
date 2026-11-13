@@ -50,6 +50,11 @@ struct Settings {
 	/** OBS audio track (1-6) guests hear. Guest sources are kept out of this track to avoid echo. */
 	int returnAudioTrack = 6;
 	/**
+	 * Name of a single OBS source whose audio guests hear instead of the track above (for example just the
+	 * microphone). Empty means the track is used.
+	 */
+	std::string returnAudioSource;
+	/**
 	 * Name of the OBS source or scene guests see (typically the host's camera). Empty means the program output,
 	 * i.e. exactly what the audience sees.
 	 */

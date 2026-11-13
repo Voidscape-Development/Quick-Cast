@@ -21,6 +21,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 
 #include <atomic>
+#include <string>
 #include <vector>
 
 namespace qc {
@@ -193,8 +194,9 @@ void ReturnFeed::release()
 	output_ = nullptr;
 	videoEncoder_ = nullptr;
 	audioEncoder_ = nullptr;
-	// The view's video output must outlive the encoder that reads from it.
+	// The view's video output and the tapped audio output must outlive the encoders that read from them.
 	releaseView();
+	audioTap_.close();
 }
 
 void ReturnFeed::releaseView()
@@ -316,7 +318,19 @@ bool ReturnFeed::createObjects()
 	if (main) {
 		OBSDataAutoRelease audioSettings = obs_data_create();
 		obs_data_set_int(audioSettings, "bitrate", settings_.returnAudioBitrateKbps);
-		const size_t mixer = static_cast<size_t>(settings_.returnAudioTrack - 1);
+		// Guests hear either one of OBS' mix tracks or a single chosen source on its own.
+		audio_t *audioSource = obs_get_audio();
+		size_t mixer = static_cast<size_t>(settings_.returnAudioTrack - 1);
+		if (!settings_.returnAudioSource.empty()) {
+			if (audioTap_.open(settings_.returnAudioSource)) {
+				audioSource = audioTap_.audio();
+				mixer = 0;
+			} else {
+				blog(LOG_WARNING,
+				     "[quick-cast] return audio source '%s' not found; sending audio track %d instead",
+				     settings_.returnAudioSource.c_str(), settings_.returnAudioTrack);
+			}
+		}
 		audioEncoder_ = obs_audio_encoder_create("ffmpeg_opus", "Quick Cast Return Audio", audioSettings, mixer,
 							 nullptr);
 		if (!audioEncoder_) {
@@ -325,7 +339,7 @@ bool ReturnFeed::createObjects()
 			releaseView();
 			return false;
 		}
-		obs_encoder_set_audio(audioEncoder_, obs_get_audio());
+		obs_encoder_set_audio(audioEncoder_, audioSource);
 	}
 
 	output_ = obs_output_create(main ? kOutputId : kVideoOnlyOutputId,
@@ -367,8 +381,10 @@ void ReturnFeed::start()
 		return;
 	}
 	if (feed_ == ReturnFeedId::Main)
-		blog(LOG_INFO, "[quick-cast] return feed started (video: %s, audio track %d)",
-		     view_ ? sourceName().c_str() : "program", settings_.returnAudioTrack);
+		blog(LOG_INFO, "[quick-cast] return feed started (video: %s, audio: %s)",
+		     view_ ? sourceName().c_str() : "program",
+		     audioTap_.audio() ? settings_.returnAudioSource.c_str()
+				       : ("track " + std::to_string(settings_.returnAudioTrack)).c_str());
 	else
 		blog(LOG_INFO, "[quick-cast] second feed started (video: %s)",
 		     view_ ? sourceName().c_str() : "program");

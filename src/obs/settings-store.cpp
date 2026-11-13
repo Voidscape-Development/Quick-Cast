@@ -127,6 +127,7 @@ Settings loadSettings()
 		settings.returnAudioTrack =
 			static_cast<int>(std::clamp<long long>(obs_data_get_int(data, "return_audio_track"), 1, 6));
 		settings.returnVideoSource = getString(data, "return_video_source");
+		settings.returnAudioSource = getString(data, "return_audio_source");
 		settings.secondFeedEnabled = obs_data_get_bool(data, "second_feed_enabled");
 		settings.secondVideoSource = getString(data, "second_video_source");
 		obs_data_set_default_int(data, "second_height", settings.secondHeight);
@@ -187,6 +188,7 @@ void saveSettings(const Settings &settings)
 	obs_data_set_bool(data, "return_feed_enabled", settings.returnFeedEnabled);
 	obs_data_set_int(data, "return_audio_track", settings.returnAudioTrack);
 	obs_data_set_string(data, "return_video_source", settings.returnVideoSource.c_str());
+	obs_data_set_string(data, "return_audio_source", settings.returnAudioSource.c_str());
 	obs_data_set_bool(data, "second_feed_enabled", settings.secondFeedEnabled);
 	obs_data_set_string(data, "second_video_source", settings.secondVideoSource.c_str());
 	obs_data_set_int(data, "second_height", settings.secondHeight);

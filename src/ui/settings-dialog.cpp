@@ -84,6 +84,26 @@ QStringList videoSourceNames()
 	return sources + scenes;
 }
 
+/** Every source that produces audio, excluding the guests themselves (they must not be sent back to guests). */
+QStringList audioSourceNames()
+{
+	QStringList names;
+	obs_enum_sources(
+		[](void *param, obs_source_t *source) {
+			const char *name = obs_source_get_name(source);
+			const char *id = obs_source_get_unversioned_id(source);
+			if (!name || !*name || (obs_source_get_output_flags(source) & OBS_SOURCE_AUDIO) == 0)
+				return true;
+			if (id && strcmp(id, kGuestSourceId) == 0)
+				return true;
+			static_cast<QStringList *>(param)->append(QString::fromUtf8(name));
+			return true;
+		},
+		&names);
+	names.sort(Qt::CaseInsensitive);
+	return names;
+}
+
 void selectData(QComboBox *combo, int value)
 {
 	const int index = combo->findData(value);
@@ -97,7 +117,7 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	  controller_(controller)
 {
 	setWindowTitle(tr_("Settings.Title"));
-	setMinimumSize(700, 500);
+	setMinimumSize(700, 580);
 	const Settings &settings = controller_->settings();
 	const ui::Colors c = ui::colors(this);
 
@@ -300,25 +320,48 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	mainFeed->addRow(tr_("Settings.Return.Quality"), qualityRow(returnResolution_, returnBitrate_));
 	mainFeed->addRow(hint(tr_("Settings.Return.MainHint"), this));
 
-	QFormLayout *secondFeed = makeGroup(returnBody, "Settings.Return.Second");
-	secondFeed->addRow(tr_("Settings.Return.Source"), secondVideo_);
-	secondFeed->addRow(tr_("Settings.Return.Quality"), qualityRow(secondResolution_, secondBitrate_));
-	secondFeed->addRow(hint(tr_("Settings.Return.SecondHint"), this));
-
 	QFormLayout *audio = makeGroup(returnBody, "Settings.Group.Audio");
+	// A whole mix track, or one source on its own (typically just the microphone).
+	returnAudio_ = new QComboBox(this);
+	returnAudio_->addItem(tr_("Settings.Return.Audio.Track"), QString());
+	for (const QString &name : audioSourceNames())
+		returnAudio_->addItem(name, name);
+	{
+		const QString current = QString::fromStdString(settings.returnAudioSource);
+		int index = returnAudio_->findData(current);
+		if (index < 0) {
+			returnAudio_->addItem(current, current);
+			index = returnAudio_->count() - 1;
+		}
+		returnAudio_->setCurrentIndex(index);
+	}
+	audio->addRow(tr_("Settings.Return.Audio"), returnAudio_);
 	returnTrack_ = new QComboBox(this);
 	for (int track = 1; track <= 6; ++track)
 		returnTrack_->addItem(tr_("Settings.Return.TrackN").arg(track), track);
 	selectData(returnTrack_, settings.returnAudioTrack);
 	audio->addRow(tr_("Settings.Return.Track"), returnTrack_);
-	audio->addRow(hint(tr_("Settings.Return.TrackHint"), this));
+	auto *trackHint = hint(tr_("Settings.Return.TrackHint"), this);
+	auto *sourceHint = hint(tr_("Settings.Return.AudioSourceHint"), this);
+	audio->addRow(trackHint);
+	audio->addRow(sourceHint);
+
+	QFormLayout *secondFeed = makeGroup(returnBody, "Settings.Return.Second");
+	secondFeed->addRow(tr_("Settings.Return.Source"), secondVideo_);
+	secondFeed->addRow(tr_("Settings.Return.Quality"), qualityRow(secondResolution_, secondBitrate_));
+	secondFeed->addRow(hint(tr_("Settings.Return.SecondHint"), this));
 	returnBody->addStretch(1);
 
-	const auto syncReturnControls = [this] {
+	const auto syncReturnControls = [this, trackHint, sourceHint] {
 		const bool enabled = returnEnabled_->isChecked();
 		returnVideo_->setEnabled(enabled);
 		secondVideo_->setEnabled(enabled);
-		returnTrack_->setEnabled(enabled);
+		returnAudio_->setEnabled(enabled);
+		// The track only applies when no single source is picked; show the explanation that matches.
+		const bool usesTrack = returnAudio_->currentIndex() == 0;
+		returnTrack_->setEnabled(enabled && usesTrack);
+		trackHint->setVisible(usesTrack);
+		sourceHint->setVisible(!usesTrack);
 		returnResolution_->setEnabled(enabled);
 		returnBitrate_->setEnabled(enabled);
 		const bool second = enabled && secondVideo_->currentIndex() > 0;
@@ -327,6 +370,7 @@ SettingsDialog::SettingsDialog(SessionController *controller, QWidget *parent)
 	};
 	connect(returnEnabled_, &QCheckBox::toggled, this, syncReturnControls);
 	connect(secondVideo_, &QComboBox::currentIndexChanged, this, syncReturnControls);
+	connect(returnAudio_, &QComboBox::currentIndexChanged, this, syncReturnControls);
 	syncReturnControls();
 
 	// ---------------------------------------------------------------------------------------------- Network
@@ -446,6 +490,7 @@ void SettingsDialog::save()
 	settings.returnVideoSource = returnVideo_->currentData().toString().toStdString();
 	settings.secondFeedEnabled = secondVideo_->currentIndex() > 0;
 	settings.secondVideoSource = secondVideo_->currentData().toString().toStdString();
+	settings.returnAudioSource = returnAudio_->currentData().toString().toStdString();
 	settings.returnAudioTrack = returnTrack_->currentData().toInt();
 	settings.returnHeight = static_cast<uint32_t>(returnResolution_->currentData().toInt());
 	settings.returnVideoBitrateKbps = static_cast<uint32_t>(returnBitrate_->value());

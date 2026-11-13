@@ -54,6 +54,7 @@ private:
 	QCheckBox *returnEnabled_;
 	QComboBox *returnVideo_;
 	QComboBox *secondVideo_;
+	QComboBox *returnAudio_;
 	QComboBox *returnTrack_;
 	QComboBox *returnResolution_;
 	QSpinBox *returnBitrate_;

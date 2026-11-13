@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "session/guest-service.hpp"
 #include "settings-store.hpp"
+#include "source-audio.hpp"
 
 #include <obs.hpp>
 
@@ -71,6 +72,8 @@ private:
 	OBSEncoderAutoRelease audioEncoder_;
 	/** Private render of a single source, used when guests should see something other than the program. */
 	obs_view_t *view_ = nullptr;
+	/** Private audio output carrying one source, used when guests should hear that source instead of a track. */
+	SourceAudioTap audioTap_;
 };
 
 } // namespace qc
