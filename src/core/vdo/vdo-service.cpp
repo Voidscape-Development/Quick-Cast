@@ -1436,9 +1436,12 @@ public:
 					std::lock_guard<std::mutex> lock(self.returnMutex_);
 					format = self.returnFormat_[strong->feed];
 				}
-				// Guests see each feed as its own tile; the suffix tells the two apart.
-				const std::string label = strong->feed == 0 ? self.config_.hostName
-									    : self.config_.hostName + " (2)";
+				// Each feed is its own tile (or, at a host, its own entry in the guest list); the suffix
+				// tells the two apart. A guest's second feed is something they chose to share, and
+				// "(shared)" tells the host that without making them guess what "(2)" is.
+				std::string label = self.config_.hostName;
+				if (strong->feed != 0)
+					label += self.guestRole() ? " (shared)" : " (2)";
 				sendJson(strong->channel, buildPublisherInfo(label, format.width, format.height,
 									     format.framesPerSecond));
 			}));

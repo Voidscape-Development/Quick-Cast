@@ -49,6 +49,7 @@ private:
 	SessionController *controller_;
 	QLineEdit *linkEdit_;
 	QLineEdit *nameEdit_;
+	QLineEdit *ownNameEdit_;
 	QLabel *problem_;
 	QComboBox *camera_;
 	QLabel *cameraHint_;

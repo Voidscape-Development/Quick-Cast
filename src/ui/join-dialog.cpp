@@ -69,6 +69,16 @@ JoinDialog::JoinDialog(SessionController *controller, QWidget *parent) : QDialog
 	nameEdit_->setPlaceholderText(tr_("Join.Name.Placeholder"));
 	nameLabel->setBuddy(nameEdit_);
 
+	// The host sees this next to our video, and it names anything we share alongside the camera. The out-of-the-box
+	// name is "Host", which is exactly wrong in someone else's show, so that one has to be replaced.
+	auto *ownNameLabel = new QLabel(tr_("Join.OwnName"), this);
+	ownNameEdit_ = new QLineEdit(this);
+	ownNameEdit_->setMaxLength(40);
+	ownNameEdit_->setPlaceholderText(tr_("Join.OwnName.Placeholder"));
+	if (!settings.hostName.empty() && settings.hostName != Settings().hostName)
+		ownNameEdit_->setText(QString::fromStdString(settings.hostName));
+	ownNameLabel->setBuddy(ownNameEdit_);
+
 	// --- What you send ---
 	auto *sendHeading = new QLabel(tr_("Join.Send"), this);
 	ui::styleHeading(sendHeading, 1.05);
@@ -136,6 +146,8 @@ JoinDialog::JoinDialog(SessionController *controller, QWidget *parent) : QDialog
 	layout->addWidget(problem_);
 	layout->addWidget(nameLabel);
 	layout->addWidget(nameEdit_);
+	layout->addWidget(ownNameLabel);
+	layout->addWidget(ownNameEdit_);
 	layout->addSpacing(10);
 	layout->addWidget(sendHeading);
 	layout->addLayout(form);
@@ -145,6 +157,7 @@ JoinDialog::JoinDialog(SessionController *controller, QWidget *parent) : QDialog
 	layout->addLayout(buttons);
 
 	connect(linkEdit_, &QLineEdit::textChanged, this, &JoinDialog::validate);
+	connect(ownNameEdit_, &QLineEdit::textChanged, this, &JoinDialog::validate);
 	connect(camera_, &QComboBox::currentIndexChanged, this, &JoinDialog::validate);
 	connect(joinButton_, &QPushButton::clicked, this, &JoinDialog::join);
 	connect(cancelButton, &QPushButton::clicked, this, &QDialog::reject);
@@ -152,6 +165,8 @@ JoinDialog::JoinDialog(SessionController *controller, QWidget *parent) : QDialog
 	validate();
 	if (linkEdit_->text().isEmpty())
 		linkEdit_->setFocus();
+	else if (ownNameEdit_->text().isEmpty())
+		ownNameEdit_->setFocus();
 	else
 		joinButton_->setFocus();
 }
@@ -160,7 +175,7 @@ void JoinDialog::validate()
 {
 	const QString link = linkEdit_->text().trimmed();
 	const bool valid = controller_->isInviteLink(link);
-	joinButton_->setEnabled(valid);
+	joinButton_->setEnabled(valid && !ownNameEdit_->text().trimmed().isEmpty());
 	// Say what is wrong only once there is something to be wrong about.
 	if (link.isEmpty() || valid)
 		problem_->setVisible(false);
@@ -180,6 +195,7 @@ void JoinDialog::join()
 	// What we send is a standing choice, not part of this one show, so it is saved with the other settings and
 	// used again when a remembered show is joined with one click.
 	Settings settings = controller_->settings();
+	settings.hostName = ownNameEdit_->text().trimmed().toStdString();
 	settings.collabConfigured = true;
 	settings.collabVideoSource = camera_->currentData().toString().toStdString();
 	settings.collabAudioSource = microphone_->currentData().toString().toStdString();

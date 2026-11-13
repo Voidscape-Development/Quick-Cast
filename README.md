@@ -55,7 +55,8 @@ without cropping, items you have locked are left where they are, and you can mov
 1. Ask them for an invite link (a personal one or their open link).
 2. Click **Join a show…** in the dock and paste it. Quick Cast fills it in for you if it is already on your
    clipboard.
-3. Check **What you send**: your camera, your microphone and, optionally, one more source such as your gameplay.
+3. Enter **your name** as the host should see it, and check **What you send**: your camera, your microphone and,
+   optionally, one more source such as your gameplay.
 4. Click **Join**. The host and their other guests appear in the dock; add them to a scene like any guest.
 
 A few things worth knowing:
@@ -120,7 +121,8 @@ scene collections.
 - A show is a mesh: everyone in it connects to everyone else, and each feed is uploaded once per person watching
   it. On a home connection that is comfortable for about four or five streamers.
 - Layouts fit each guest inside their tile; they do not crop a wide camera to fill a tall column.
-- A second source you share when joining a show appears to the host as a separate person.
+- A second source you share when joining a show appears to the host as a separate entry, named after you with
+  "(shared)", for example "Alex (shared)".
 - Removing a guest with **Disconnect** relies on Quick Cast holding the director role in the room. If someone else
   has already claimed the same show name, guests still connect but cannot be disconnected remotely.
 

@@ -22,6 +22,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 //                    [--dump DIR] [--return-h264 FILE --return-fps N] [--no-return] [--kick-after N]
 //   quick-cast-probe --join LINK [--name NAME] [--seconds N] [--dump DIR] [--return-h264 FILE]
 //
+// --second also publishes the second feed (the same --return-h264 video), as a host's second feed or as the extra
+// source a guest shares.
+//
 // --join takes a seat in the show an invite link leads to, the way the plugin's "Join a show" does. Run one probe
 // as the host and another with one of the links it prints to exercise both ends without a browser.
 //
@@ -202,6 +205,8 @@ int main(int argc, char **argv)
 			returnFile = next();
 		else if (arg == "--return-fps")
 			returnFps = std::stoi(next());
+		else if (arg == "--second")
+			config.secondFeedEnabled = true;
 		else if (arg == "--no-return")
 			config.returnFeedEnabled = false;
 		else if (arg == "--vp8")
@@ -277,7 +282,8 @@ int main(int argc, char **argv)
 		auto units = loadAccessUnits(returnFile);
 		std::printf("[return] loaded %zu access units\n", units.size());
 		if (!units.empty()) {
-			returnThread = std::thread([&service, &running, units = std::move(units), returnFps] {
+			const bool second = config.secondFeedEnabled;
+			returnThread = std::thread([&service, &running, units = std::move(units), returnFps, second] {
 				const auto start = std::chrono::steady_clock::now();
 				// 20 ms of Opus silence (CELT fullband, mono) keeps the audio track alive.
 				const uint8_t silence[] = {0xF8, 0xFF, 0xFE};
@@ -288,6 +294,9 @@ int main(int argc, char **argv)
 					const auto &unit = units[frame % units.size()];
 					service.sendReturnVideo(ReturnFeedId::Main, unit.first.data(),
 								unit.first.size(), ptsUs, unit.second);
+					if (second)
+						service.sendReturnVideo(ReturnFeedId::Second, unit.first.data(),
+									unit.first.size(), ptsUs, unit.second);
 					while (static_cast<int64_t>(audioFrame * 20'000) <= ptsUs) {
 						service.sendReturnAudio(silence, sizeof(silence),
 									static_cast<int64_t>(audioFrame * 20'000));
