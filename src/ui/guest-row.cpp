@@ -47,7 +47,8 @@ QString formatBitrate(double kbps)
 GuestRow::GuestRow(SessionController *controller, const GuestView &guest, QWidget *parent)
 	: QFrame(parent),
 	  controller_(controller),
-	  guestId_(guest.seat.id)
+	  guestId_(guest.seat.id),
+	  ownGuest_(!controller->inviteLink(guest.seat.id).isEmpty())
 {
 	setObjectName(QStringLiteral("quickCastGuestCard"));
 
@@ -70,8 +71,10 @@ GuestRow::GuestRow(SessionController *controller, const GuestView &guest, QWidge
 	refreshAction_ = menu->addAction(tr_("Guest.RefreshVideo"));
 	menu->addSeparator();
 	disconnectAction_ = menu->addAction(tr_("Guest.Disconnect"));
-	QAction *removeAction = menu->addAction(tr_("Guest.Remove"));
+	QAction *removeAction = menu->addAction(ownGuest_ ? tr_("Guest.Remove") : tr_("Guest.Forget"));
 	menuButton_->setMenu(menu);
+	linkButton_->setVisible(ownGuest_);
+	disconnectAction_->setVisible(ownGuest_);
 
 	sceneButton_ = new QPushButton(this);
 	sceneButton_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
@@ -262,7 +265,8 @@ void GuestRow::rename()
 
 void GuestRow::remove()
 {
-	const auto answer = QMessageBox::question(window(), tr_("Remove.Title"), tr_("Remove.Text").arg(name_),
+	const auto answer = QMessageBox::question(window(), ownGuest_ ? tr_("Remove.Title") : tr_("Forget.Title"),
+						  (ownGuest_ ? tr_("Remove.Text") : tr_("Forget.Text")).arg(name_),
 						  QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
 	if (answer == QMessageBox::Yes) {
 		controller_->removeGuestFromCurrentScene(guestId_);

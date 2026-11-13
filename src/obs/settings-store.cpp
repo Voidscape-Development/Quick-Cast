@@ -82,6 +82,61 @@ GuestSeat *Settings::findSeat(const std::string &id)
 	return it != seats.end() ? &*it : nullptr;
 }
 
+const GuestSeat *Collaborator::findSeat(const std::string &seatId) const
+{
+	auto it = std::find_if(seats.begin(), seats.end(), [&](const GuestSeat &seat) { return seat.id == seatId; });
+	return it != seats.end() ? &*it : nullptr;
+}
+
+GuestSeat *Collaborator::findSeat(const std::string &seatId)
+{
+	auto it = std::find_if(seats.begin(), seats.end(), [&](const GuestSeat &seat) { return seat.id == seatId; });
+	return it != seats.end() ? &*it : nullptr;
+}
+
+const Collaborator *Settings::findCollaborator(const std::string &id) const
+{
+	auto it = std::find_if(collaborators.begin(), collaborators.end(),
+			       [&](const Collaborator &collaborator) { return collaborator.id == id; });
+	return it != collaborators.end() ? &*it : nullptr;
+}
+
+Collaborator *Settings::findCollaborator(const std::string &id)
+{
+	auto it = std::find_if(collaborators.begin(), collaborators.end(),
+			       [&](const Collaborator &collaborator) { return collaborator.id == id; });
+	return it != collaborators.end() ? &*it : nullptr;
+}
+
+Settings Settings::forJoinedShow() const
+{
+	Settings joined = *this;
+	joined.returnFeedEnabled = true;
+	joined.returnVideoSource = collabVideoSource;
+	joined.returnAudioSource = collabAudioSource;
+	joined.returnHeight = collabHeight;
+	joined.returnVideoBitrateKbps = collabVideoBitrateKbps;
+	// Unlike a host's second feed, a guest's has no sensible "program" default: that is the picture everyone in
+	// the show is already part of.
+	joined.secondFeedEnabled = collabSecondEnabled && !collabSecondSource.empty();
+	joined.secondVideoSource = collabSecondSource;
+	return joined;
+}
+
+ShowConfig Settings::toJoinConfig(const Collaborator &collaborator) const
+{
+	ShowConfig config = toShowConfig();
+	config.role = ShowRole::Guest;
+	config.room = collaborator.target.room;
+	config.password = collaborator.target.password;
+	config.ownSeatId = collaborator.target.seatId;
+	config.seatPrefix = collaborator.seatPrefix();
+	config.seats = collaborator.seats;
+	config.returnFeedEnabled = true;
+	config.secondFeedEnabled = forJoinedShow().secondFeedEnabled;
+	return config;
+}
+
 ShowConfig Settings::toShowConfig() const
 {
 	ShowConfig config;
@@ -158,6 +213,52 @@ Settings loadSettings()
 		}
 	}
 
+	if (data) {
+		obs_data_set_default_int(data, "collab_height", settings.collabHeight);
+		obs_data_set_default_int(data, "collab_video_bitrate_kbps", settings.collabVideoBitrateKbps);
+		obs_data_set_default_bool(data, "layout_includes_camera", settings.layoutIncludesCamera);
+		settings.collabConfigured = obs_data_get_bool(data, "collab_configured");
+		settings.collabVideoSource = getString(data, "collab_video_source");
+		settings.collabAudioSource = getString(data, "collab_audio_source");
+		settings.collabSecondEnabled = obs_data_get_bool(data, "collab_second_enabled");
+		settings.collabSecondSource = getString(data, "collab_second_source");
+		settings.collabHeight = static_cast<uint32_t>(
+			std::clamp<long long>(obs_data_get_int(data, "collab_height"), 180, 1080));
+		settings.collabVideoBitrateKbps = static_cast<uint32_t>(
+			std::clamp<long long>(obs_data_get_int(data, "collab_video_bitrate_kbps"), 200, 8000));
+		settings.layoutIncludesCamera = obs_data_get_bool(data, "layout_includes_camera");
+
+		OBSDataArrayAutoRelease collaborators = obs_data_get_array(data, "collaborators");
+		const size_t collaboratorCount = collaborators ? obs_data_array_count(collaborators) : 0;
+		for (size_t i = 0; i < collaboratorCount; ++i) {
+			OBSDataAutoRelease item = obs_data_array_item(collaborators, i);
+			Collaborator collaborator;
+			collaborator.id = getString(item, "id");
+			collaborator.name = getString(item, "name");
+			collaborator.target.room = getString(item, "room");
+			collaborator.target.password = getString(item, "password");
+			collaborator.target.seatId = getString(item, "seat_id");
+			collaborator.target.name = getString(item, "seat_name");
+			collaborator.lastJoined = obs_data_get_int(item, "last_joined");
+			if (collaborator.id.empty() || collaborator.target.room.empty() ||
+			    settings.findCollaborator(collaborator.id))
+				continue;
+
+			// Seats of a joined show carry the collaborator's prefix; anything else is not ours to keep.
+			OBSDataArrayAutoRelease seats = obs_data_get_array(item, "seats");
+			const size_t seatCount = seats ? obs_data_array_count(seats) : 0;
+			for (size_t s = 0; s < seatCount; ++s) {
+				OBSDataAutoRelease seatItem = obs_data_array_item(seats, s);
+				GuestSeat seat;
+				seat.id = getString(seatItem, "id");
+				seat.name = getString(seatItem, "name", "Guest");
+				if (seat.id.rfind(collaborator.seatPrefix(), 0) == 0 && !collaborator.findSeat(seat.id))
+					collaborator.seats.push_back(seat);
+			}
+			settings.collaborators.push_back(std::move(collaborator));
+		}
+	}
+
 	// First run: give the show its own private room so links work without any setup.
 	bool generated = false;
 	if (settings.room.empty()) {
@@ -208,6 +309,37 @@ void saveSettings(const Settings &settings)
 		obs_data_array_push_back(seats, item);
 	}
 	obs_data_set_array(data, "seats", seats);
+
+	obs_data_set_bool(data, "collab_configured", settings.collabConfigured);
+	obs_data_set_string(data, "collab_video_source", settings.collabVideoSource.c_str());
+	obs_data_set_string(data, "collab_audio_source", settings.collabAudioSource.c_str());
+	obs_data_set_bool(data, "collab_second_enabled", settings.collabSecondEnabled);
+	obs_data_set_string(data, "collab_second_source", settings.collabSecondSource.c_str());
+	obs_data_set_int(data, "collab_height", settings.collabHeight);
+	obs_data_set_int(data, "collab_video_bitrate_kbps", settings.collabVideoBitrateKbps);
+	obs_data_set_bool(data, "layout_includes_camera", settings.layoutIncludesCamera);
+
+	OBSDataArrayAutoRelease collaborators = obs_data_array_create();
+	for (const Collaborator &collaborator : settings.collaborators) {
+		OBSDataAutoRelease item = obs_data_create();
+		obs_data_set_string(item, "id", collaborator.id.c_str());
+		obs_data_set_string(item, "name", collaborator.name.c_str());
+		obs_data_set_string(item, "room", collaborator.target.room.c_str());
+		obs_data_set_string(item, "password", collaborator.target.password.c_str());
+		obs_data_set_string(item, "seat_id", collaborator.target.seatId.c_str());
+		obs_data_set_string(item, "seat_name", collaborator.target.name.c_str());
+		obs_data_set_int(item, "last_joined", collaborator.lastJoined);
+		OBSDataArrayAutoRelease collaboratorSeats = obs_data_array_create();
+		for (const GuestSeat &seat : collaborator.seats) {
+			OBSDataAutoRelease seatItem = obs_data_create();
+			obs_data_set_string(seatItem, "id", seat.id.c_str());
+			obs_data_set_string(seatItem, "name", seat.name.c_str());
+			obs_data_array_push_back(collaboratorSeats, seatItem);
+		}
+		obs_data_set_array(item, "seats", collaboratorSeats);
+		obs_data_array_push_back(collaborators, item);
+	}
+	obs_data_set_array(data, "collaborators", collaborators);
 
 	const std::string path = configPath(kSettingsFile);
 	if (path.empty())

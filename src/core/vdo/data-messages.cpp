@@ -58,6 +58,8 @@ PeerDataMessage parsePeerDataMessage(const Json &message)
 
 	// On a data channel `bye` is acted on by presence; the official client sends e.g. {"videoMuted":true,"bye":true}.
 	result.bye = message.contains("bye");
+	if (auto hangup = asBool(message, "hangup"))
+		result.hangup = *hangup;
 	result.iceRestartRequested = message.contains("iceRestartRequest");
 	result.keyframeRequested = message.contains("keyframe") || message.contains("requestKeyframe");
 

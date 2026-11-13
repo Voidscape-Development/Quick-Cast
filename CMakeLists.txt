@@ -78,14 +78,20 @@ target_sources(
     src/obs/settings-store.hpp
     src/obs/source-audio.cpp
     src/obs/source-audio.hpp
+    src/ui/collaborator-row.cpp
+    src/ui/collaborator-row.hpp
     src/ui/guest-row.cpp
     src/ui/guest-row.hpp
     src/ui/invite-dialog.cpp
     src/ui/invite-dialog.hpp
+    src/ui/join-dialog.cpp
+    src/ui/join-dialog.hpp
     src/ui/quick-cast-dock.cpp
     src/ui/quick-cast-dock.hpp
     src/ui/settings-dialog.cpp
     src/ui/settings-dialog.hpp
+    src/ui/source-lists.cpp
+    src/ui/source-lists.hpp
     src/ui/ui-helpers.hpp
     src/ui/ui-style.cpp
     src/ui/ui-style.hpp

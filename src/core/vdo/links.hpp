@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "identity.hpp"
 
+#include <optional>
 #include <string>
 
 namespace qc::vdo {
@@ -43,5 +44,22 @@ std::string encodeQueryValue(const std::string &value);
 
 /** Builds the link a guest opens to join the show. */
 std::string buildInviteLink(const InviteOptions &options);
+
+struct ParsedInvite {
+	/** Sanitised room name. */
+	std::string room;
+	/** Password as the link carries it; empty means the service default, "false" means none. */
+	std::string password;
+	/** Sanitised stream ID the link reserves; empty for an open link. */
+	std::string streamId;
+	std::string label;
+};
+
+/**
+ * Reads a guest link (ours, or one written by hand for the web app) back into its parts, so Quick Cast can join
+ * the show itself instead of a browser. Returns nullopt for anything that is not a link into a room, including
+ * a director's own link.
+ */
+std::optional<ParsedInvite> parseInviteLink(const std::string &link);
 
 } // namespace qc::vdo

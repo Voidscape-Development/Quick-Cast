@@ -38,6 +38,10 @@ struct VdoServiceOptions {
  * (optionally) seeds one stream of its own, the return feed, that guests' browsers pick up automatically. A second
  * feed is published by joining the room a second time as an ordinary member, which is how the web app itself
  * presents an extra stream from the same person.
+ *
+ * In the guest role the same machinery runs from the other chair: we join the host's room without claiming it,
+ * seed our stream under the seat our invite link reserves, and view everyone else. Two Quick Cast installations
+ * therefore connect to each other exactly as a host and a browser guest do.
  */
 class VdoService final : public GuestService {
 public:
@@ -54,6 +58,7 @@ public:
 
 	std::string inviteLink(const ShowConfig &config, const GuestSeat &seat) const override;
 	std::string openInviteLink(const ShowConfig &config) const override;
+	std::optional<InviteTarget> parseInviteLink(const std::string &link) const override;
 
 	void setMediaSink(const std::string &guestId, std::shared_ptr<GuestMediaSink> sink) override;
 	void setGuestQuality(const std::string &guestId, const GuestQuality &quality) override;

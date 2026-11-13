@@ -10,6 +10,8 @@ add_library(quick-cast-core STATIC)
 target_sources(
   quick-cast-core
   PRIVATE
+    layout/tile-layout.cpp
+    layout/tile-layout.hpp
     rtp/receive-stream.cpp
     rtp/receive-stream.hpp
     rtp/reorder-buffer.cpp

@@ -37,6 +37,7 @@ public:
 
 private:
 	void regenerateLinks();
+	void applyCoStreamingPreset();
 	void save();
 
 	SessionController *controller_;
@@ -60,6 +61,12 @@ private:
 	QSpinBox *returnBitrate_;
 	QComboBox *secondResolution_;
 	QSpinBox *secondBitrate_;
+
+	QComboBox *collabVideo_;
+	QComboBox *collabAudio_;
+	QComboBox *collabSecond_;
+	QComboBox *collabResolution_;
+	QSpinBox *collabBitrate_;
 
 	QLineEdit *turnUrl_;
 	QLineEdit *turnUsername_;

@@ -36,6 +36,8 @@ struct PeerDataMessage {
 	std::optional<Json> pingToken;
 	/** The peer is going away. */
 	bool bye = false;
+	/** The room's director is ending our session. */
+	bool hangup = false;
 	/** The viewer lost connectivity and wants a fresh offer. */
 	bool iceRestartRequested = false;
 	bool keyframeRequested = false;

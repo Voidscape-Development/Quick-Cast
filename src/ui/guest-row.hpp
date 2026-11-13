@@ -66,6 +66,9 @@ private:
 	bool sceneStateKnown_ = false;
 	bool connected_ = false;
 	bool styledConnected_ = false;
+	/** Whether this guest sits in our own show. Someone met in a show we joined has no link of ours to copy and
+	 *  is not ours to disconnect. */
+	bool ownGuest_ = true;
 
 	ui::Avatar *avatar_;
 	ui::ElidedLabel *nameLabel_;

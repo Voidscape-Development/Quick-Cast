@@ -21,6 +21,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -28,7 +29,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
  * The seam between Quick Cast and whatever service actually connects the host to their guests.
  *
  * Everything above this interface (OBS sources, the return-feed output, the dock) is service agnostic; everything
- * below it is one implementation. Today that is VDO.Ninja (vdo/vdo-service.hpp). A first-party service only has to
+ * below it is one implementation. A show is symmetric at this level: whichever role we play, the other people in it
+ * are seats whose media we receive, and the "return feed" is simply what we send them. Today that is VDO.Ninja (vdo/vdo-service.hpp). A first-party service only has to
  * implement GuestService.
  */
 namespace qc {
@@ -124,15 +126,41 @@ struct IceServer {
 	std::string credential;
 };
 
+/** Which side of a show this installation is on. */
+enum class ShowRole {
+	/** Our own show: we invite, guests take seats. */
+	Host,
+	/** Someone else's show, joined with their invite link: we take a seat and they are the host. */
+	Guest,
+};
+
+/** What an invite link says about the show it leads to. */
+struct InviteTarget {
+	std::string room;
+	std::string password;
+	/** The seat the link reserves; empty for an open link. */
+	std::string seatId;
+	/** The name the host gave that seat, when the link carries one. */
+	std::string name;
+};
+
 struct ShowConfig {
+	ShowRole role = ShowRole::Host;
+	/** Guest role: the seat we take in the host's show. The host's sources stay bound to it across shows. */
+	std::string ownSeatId;
+	/**
+	 * Guest role: prepended to the ID of every seat this show reports (the host and the other guests), so the
+	 * people in someone else's show can never collide with the seats of our own.
+	 */
+	std::string seatPrefix;
 	/** Name of the show; with the password it determines every invite link. */
 	std::string room;
 	std::string password;
-	/** How the host appears to guests. */
+	/** How we appear to everyone else in the show. */
 	std::string hostName = "Host";
 	std::vector<GuestSeat> seats;
 	GuestQuality defaultQuality;
-	/** Publish the return feed so guests can see and hear the show. */
+	/** Publish the return feed so guests can see and hear the show. Always on in the guest role. */
 	bool returnFeedEnabled = true;
 	/** Also publish a second, video-only feed (e.g. the program next to the host's camera). */
 	bool secondFeedEnabled = false;
@@ -190,6 +218,8 @@ public:
 	virtual std::string inviteLink(const ShowConfig &config, const GuestSeat &seat) const = 0;
 	/** Link anyone can use to join; each person who uses it gets a new seat. */
 	virtual std::string openInviteLink(const ShowConfig &config) const = 0;
+	/** Reads an invite link produced by this service (ours or another host's). nullopt if it is not one. */
+	virtual std::optional<InviteTarget> parseInviteLink(const std::string &link) const = 0;
 
 	/** Routes a guest's media to `sink` (nullptr detaches). The sink must outlive its registration. */
 	virtual void setMediaSink(const std::string &guestId, std::shared_ptr<GuestMediaSink> sink) = 0;

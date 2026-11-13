@@ -59,6 +59,12 @@ constexpr int64_t kMediaSilenceUs = 5'000'000;
 constexpr uint8_t kReturnVideoPayloadType = 96;
 constexpr uint8_t kReturnAudioPayloadType = 111;
 constexpr size_t kMaxPendingCandidates = 100;
+/** Guest role: how often and how patiently to ask again for a seat the server says is taken. */
+constexpr int kSeatBusyRetries = 3;
+constexpr auto kSeatBusyRetryDelay = std::chrono::milliseconds(3000);
+/** Stream ID prefixes a Quick Cast host publishes its two feeds under; each run appends a random tail. */
+constexpr const char *kHostStreamPrefix = "host_";
+constexpr const char *kHostSecondStreamPrefix = "host2_";
 
 /** Holder that lets network threads read a seat's sink while the UI thread swaps it. */
 struct SinkSlot {
@@ -280,6 +286,10 @@ public:
 	std::map<std::string, std::string> roomStreams_;
 	Executor::TimerId statsTimer_ = 0;
 	bool returnDemand_ = false;
+	/** Guest role: times the server has told us our seat is taken, per feed. */
+	int seatBusyCount_[2] = {0, 0};
+	/** Incremented by every start and stop, so delayed work can tell that it belongs to an earlier show. */
+	uint64_t generation_ = 0;
 
 	// --- shared with other threads ---
 	mutable std::mutex statsMutex_;
@@ -377,6 +387,35 @@ public:
 		return wireStreamId == hostWireStreamId_ || wireStreamId == secondWireStreamId_;
 	}
 
+	bool guestRole() const { return config_.role == ShowRole::Guest; }
+
+	/** The seat a stream in the room belongs to. */
+	std::string seatIdFor(const std::string &wireStreamId) const
+	{
+		std::string id = credentials_.displayStreamId(wireStreamId);
+		if (!guestRole())
+			return id;
+		// A Quick Cast host publishes under a new stream ID every run. Fold those into two fixed seats, or the
+		// host would turn up as a new person (and need a new source in our scenes) each time.
+		if (id.rfind(kHostSecondStreamPrefix, 0) == 0)
+			id = "host2";
+		else if (id.rfind(kHostStreamPrefix, 0) == 0)
+			id = "host";
+		return config_.seatPrefix + id;
+	}
+
+	/** Ends the show for a reason the user has to hear about. Safe to call from inside a network callback. */
+	void failLater(const std::string &detail)
+	{
+		const uint64_t generation = generation_;
+		post([generation, detail](Impl &self) {
+			if (!self.running_ || self.generation_ != generation)
+				return;
+			self.stopInternal();
+			self.setState(ServiceState::Failed, detail);
+		});
+	}
+
 	// ---------------------------------------------------------------------------------------------------------
 	// Lifecycle
 	// ---------------------------------------------------------------------------------------------------------
@@ -387,12 +426,25 @@ public:
 			stopInternal();
 
 		config_ = config;
+		++generation_;
 		credentials_ = Credentials(config.password, kDefaultSalt);
 		defaultCredentials_ = Credentials();
 		wireRoom_ = credentials_.wireRoomId(config.room);
-		// A fresh stream ID per run avoids "already in use" when the show is restarted quickly.
-		hostWireStreamId_ = credentials_.wireStreamId("host_" + generateStreamId(8));
-		secondWireStreamId_ = credentials_.wireStreamId("host2_" + generateStreamId(8));
+		if (guestRole()) {
+			// As a guest we publish under the seat our invite link reserves, which is how the host's side
+			// recognises us. What a host calls the return feed is, for a guest, the whole point of joining.
+			config_.returnFeedEnabled = true;
+			std::string seat = sanitizeId(config.ownSeatId, kMaxStreamIdLength - 2);
+			if (seat.empty())
+				seat = generateStreamId(10);
+			hostWireStreamId_ = credentials_.wireStreamId(seat);
+			secondWireStreamId_ = credentials_.wireStreamId(seat + "_2");
+		} else {
+			// A fresh stream ID per run avoids "already in use" when the show is restarted quickly.
+			hostWireStreamId_ = credentials_.wireStreamId(kHostStreamPrefix + generateStreamId(8));
+			secondWireStreamId_ = credentials_.wireStreamId(kHostSecondStreamPrefix + generateStreamId(8));
+		}
+		seatBusyCount_[0] = seatBusyCount_[1] = 0;
 		director_ = false;
 		openedBefore_ = false;
 		secondOpenedBefore_ = false;
@@ -451,6 +503,7 @@ public:
 		if (!running_ && !signaling_)
 			return;
 		running_ = false;
+		++generation_;
 
 		executor_.cancel(statsTimer_);
 		statsTimer_ = 0;
@@ -517,7 +570,8 @@ public:
 		openedBefore_ = true;
 		roomStreams_.clear();
 
-		signaling_->send(buildJoinRoom(wireRoom_, true));
+		// Only a host claims the room; a guest joins it as an ordinary member.
+		signaling_->send(buildJoinRoom(wireRoom_, !guestRole()));
 		if (config_.returnFeedEnabled)
 			signaling_->send(buildSeed(hostWireStreamId_));
 	}
@@ -568,8 +622,8 @@ public:
 	{
 		if (feed_ != 0)
 			return; // the second membership only publishes; the main one tracks the room
-		director_ = listing.director.value_or(true);
-		if (!director_)
+		director_ = !guestRole() && listing.director.value_or(true);
+		if (!director_ && !guestRole())
 			QC_LOG_WARN("room is already claimed by another director; removing guests will not work");
 
 		QC_LOG_INFO("joined show room (%zu stream(s) present, director=%d)", listing.members.size(),
@@ -622,7 +676,12 @@ public:
 		QC_LOG_WARN("server alert: %s", alert.text.c_str());
 		if (feed_ != 0) {
 			if (containsInsensitive(alert.text, "already in use") && secondSignaling_) {
-				secondWireStreamId_ = credentials_.wireStreamId("host2_" + generateStreamId(8));
+				if (guestRole()) {
+					retrySeat(1);
+					return;
+				}
+				secondWireStreamId_ =
+					credentials_.wireStreamId(kHostSecondStreamPrefix + generateStreamId(8));
 				secondSignaling_->send(buildSeed(secondWireStreamId_));
 			}
 			return;
@@ -632,8 +691,12 @@ public:
 			return; // we can still host, just without director powers
 		}
 		if (containsInsensitive(alert.text, "already in use")) {
+			if (guestRole()) {
+				retrySeat(0);
+				return;
+			}
 			// Stream ID collision on our return feed: pick another one.
-			hostWireStreamId_ = credentials_.wireStreamId("host_" + generateStreamId(8));
+			hostWireStreamId_ = credentials_.wireStreamId(kHostStreamPrefix + generateStreamId(8));
 			if (signaling_ && config_.returnFeedEnabled)
 				signaling_->send(buildSeed(hostWireStreamId_));
 			return;
@@ -645,6 +708,31 @@ public:
 		}
 		if (auto *listener = listener_.load())
 			listener->onServiceState(state_, alert.text);
+	}
+
+	/**
+	 * Guest role: the server says our seat is taken. Unlike a host we cannot simply pick another stream ID, because
+	 * the ID is the seat. Usually it is our own previous connection that the server has not let go of yet, so ask
+	 * again a few times before concluding that somebody else really is using the link.
+	 */
+	void retrySeat(int feed)
+	{
+		if (++seatBusyCount_[feed] > kSeatBusyRetries) {
+			if (feed == 0)
+				failLater("This invite link is already in use. Ask the host for a link of your own.");
+			else
+				QC_LOG_WARN("second feed not published: its seat is in use");
+			return;
+		}
+		const uint64_t generation = generation_;
+		std::weak_ptr<Impl> weak = weak_from_this();
+		executor_.postDelayed(kSeatBusyRetryDelay, [weak, generation, feed] {
+			auto self = weak.lock();
+			if (!self || !self->running_ || self->generation_ != generation)
+				return;
+			if (auto *signaling = self->signalingFor(feed))
+				signaling->send(buildSeed(self->wireStreamIdFor(feed)));
+		});
 	}
 
 	void handle(const OfferRequestMessage &request)
@@ -786,7 +874,7 @@ public:
 			return;
 
 		roomStreams_[member.streamId] = member.uuid;
-		const std::string seatId = credentials_.displayStreamId(member.streamId);
+		const std::string seatId = seatIdFor(member.streamId);
 		auto seat = ensureSeat(GuestSeat{seatId, "Guest"}, true);
 		seat->wireStreamId = member.streamId;
 
@@ -864,7 +952,7 @@ public:
 				QC_LOG_DEBUG("ignoring offer from unknown publisher %s", offer.uuid.c_str());
 				return;
 			}
-			const std::string seatId = credentials_.displayStreamId(wireStreamId);
+			const std::string seatId = seatIdFor(wireStreamId);
 			auto seat = ensureSeat(GuestSeat{seatId, "Guest"}, true);
 			seat->wireStreamId = wireStreamId;
 			roomStreams_[wireStreamId] = offer.uuid;
@@ -1348,9 +1436,12 @@ public:
 					std::lock_guard<std::mutex> lock(self.returnMutex_);
 					format = self.returnFormat_[strong->feed];
 				}
-				// Guests see each feed as its own tile; the suffix tells the two apart.
-				const std::string label = strong->feed == 0 ? self.config_.hostName
-									    : self.config_.hostName + " (2)";
+				// Each feed is its own tile (or, at a host, its own entry in the guest list); the suffix
+				// tells the two apart. A guest's second feed is something they chose to share, and
+				// "(shared)" tells the host that without making them guess what "(2)" is.
+				std::string label = self.config_.hostName;
+				if (strong->feed != 0)
+					label += self.guestRole() ? " (shared)" : " (2)";
 				sendJson(strong->channel, buildPublisherInfo(label, format.width, format.height,
 									     format.framesPerSecond));
 			}));
@@ -1418,6 +1509,12 @@ public:
 			sendJson(peer->channel, buildPong(*data.pingToken));
 		if (data.bye) {
 			closeOutbound(peer->key);
+			return;
+		}
+		if (data.hangup && guestRole()) {
+			// Sent over the connection on which the host watches us: they took us out of their show.
+			QC_LOG_INFO("removed from the show by the host");
+			failLater("The host removed you from the show.");
 			return;
 		}
 		if (data.iceRestartRequested) {
@@ -1655,6 +1752,19 @@ std::string VdoService::openInviteLink(const ShowConfig &config) const
 	options.room = config.room;
 	options.password = config.password;
 	return buildInviteLink(options);
+}
+
+std::optional<InviteTarget> VdoService::parseInviteLink(const std::string &link) const
+{
+	const auto parsed = vdo::parseInviteLink(link);
+	if (!parsed)
+		return std::nullopt;
+	InviteTarget target;
+	target.room = parsed->room;
+	target.password = parsed->password;
+	target.seatId = parsed->streamId;
+	target.name = parsed->label;
+	return target;
 }
 
 void VdoService::setMediaSink(const std::string &guestId, std::shared_ptr<GuestMediaSink> sink)

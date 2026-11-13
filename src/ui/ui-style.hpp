@@ -60,7 +60,7 @@ QColor mix(const QColor &a, const QColor &b, double amount);
 QColor tint(const QColor &color, double opacity);
 QString css(const QColor &color);
 
-enum class Icon { Link, Gear, More, Plus, Check, Speaker, SpeakerMuted, Copy, Play, Stop };
+enum class Icon { Link, Gear, More, Plus, Check, Speaker, SpeakerMuted, Copy, Play, Stop, Layout, Enter };
 
 /** Line icon drawn at any size in the given colour (themes cannot recolour bitmap icons). */
 QIcon icon(Icon which, const QColor &color, int size = 16);

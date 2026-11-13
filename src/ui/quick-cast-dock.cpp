@@ -18,8 +18,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "quick-cast-dock.hpp"
 
+#include "collaborator-row.hpp"
 #include "guest-row.hpp"
 #include "invite-dialog.hpp"
+#include "join-dialog.hpp"
 #include "settings-dialog.hpp"
 #include "ui-helpers.hpp"
 #include "ui-style.hpp"
@@ -29,6 +31,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QTimer>
@@ -68,6 +71,8 @@ QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : Q
 	subline_ = new QLabel(statusCard_);
 	subline_->setWordWrap(true);
 	showButton_ = new QPushButton(statusCard_);
+	joinButton_ = new QPushButton(tr_("Dock.JoinShow"), statusCard_);
+	joinButton_->setToolTip(tr_("Dock.JoinShow.Tooltip"));
 
 	auto *pillLine = new QHBoxLayout();
 	pillLine->setSpacing(8);
@@ -84,6 +89,7 @@ QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : Q
 	statusLayout->addWidget(subline_);
 	statusLayout->addSpacing(8);
 	statusLayout->addWidget(showButton_);
+	statusLayout->addWidget(joinButton_);
 
 	noticeLabel_ = new QLabel(this);
 	noticeLabel_->setWordWrap(true);
@@ -91,6 +97,26 @@ QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : Q
 
 	// --- Guest list ---
 	listHeading_ = new QLabel(tr_("Dock.Guests"), this);
+
+	// Layouts act on the guests in the scene, so the button sits with the list it arranges.
+	layoutButton_ = new QToolButton(this);
+	layoutButton_->setPopupMode(QToolButton::InstantPopup);
+	auto *layoutMenu = new QMenu(layoutButton_);
+	QAction *sideBySide = layoutMenu->addAction(tr_("Layout.SideBySide"));
+	QAction *grid = layoutMenu->addAction(tr_("Layout.Grid"));
+	QAction *pictureInPicture = layoutMenu->addAction(tr_("Layout.PictureInPicture"));
+	layoutMenu->addSeparator();
+	QAction *includeCamera = layoutMenu->addAction(tr_("Layout.IncludeCamera"));
+	includeCamera->setCheckable(true);
+	includeCamera->setChecked(controller_->settings().layoutIncludesCamera);
+	includeCamera->setToolTip(tr_("Layout.IncludeCamera.Tooltip"));
+	layoutMenu->setToolTipsVisible(true);
+	layoutButton_->setMenu(layoutMenu);
+
+	auto *listHeader = new QHBoxLayout();
+	listHeader->setContentsMargins(0, 0, 0, 0);
+	listHeader->addWidget(listHeading_, 1, Qt::AlignVCenter);
+	listHeader->addWidget(layoutButton_, 0, Qt::AlignVCenter);
 
 	guestContainer_ = new QWidget(this);
 	guestLayout_ = new QVBoxLayout(guestContainer_);
@@ -110,6 +136,10 @@ QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : Q
 	emptyLayout->addWidget(emptyTitle_);
 	emptyLayout->addWidget(emptyText_);
 	guestLayout_->addWidget(emptyState_);
+	// Shows joined before, below the guests of our own show. Rows are inserted after this heading.
+	collaboratorHeading_ = new QLabel(tr_("Dock.Collaborators"), guestContainer_);
+	collaboratorHeading_->setContentsMargins(0, 8, 0, 0);
+	guestLayout_->addWidget(collaboratorHeading_);
 	guestLayout_->addStretch(1);
 
 	auto *scroll = new QScrollArea(this);
@@ -126,20 +156,22 @@ QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : Q
 	openLinkButton_ = new QToolButton(this);
 	settingsButton_ = new QToolButton(this);
 
-	auto *footer = new QHBoxLayout();
-	footer->setSpacing(4);
-	footer->addWidget(inviteButton_, 1);
-	footer->addWidget(openLinkButton_, 0);
-	footer->addWidget(settingsButton_, 0);
+	footerLayout_ = new QHBoxLayout();
+	footerLayout_->setSpacing(4);
+	footerLayout_->addWidget(inviteButton_, 1);
+	// Keeps the settings button in its corner while the invite controls are hidden (in someone else's show).
+	footerLayout_->addStretch(0);
+	footerLayout_->addWidget(openLinkButton_, 0);
+	footerLayout_->addWidget(settingsButton_, 0);
 
 	auto *layout = new QVBoxLayout(this);
 	layout->setContentsMargins(10, 10, 10, 10);
 	layout->setSpacing(10);
 	layout->addWidget(statusCard_);
 	layout->addWidget(noticeLabel_);
-	layout->addWidget(listHeading_);
+	layout->addLayout(listHeader);
 	layout->addWidget(scroll, 1);
-	layout->addLayout(footer);
+	layout->addLayout(footerLayout_);
 
 	refreshTimer_ = new QTimer(this);
 	refreshTimer_->setInterval(1000);
@@ -153,6 +185,11 @@ QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : Q
 		else
 			controller_->startShow();
 	});
+	connect(joinButton_, &QPushButton::clicked, this, &QuickCastDock::joinShow);
+	connect(sideBySide, &QAction::triggered, this, [this] { applyLayout(LayoutKind::SideBySide); });
+	connect(grid, &QAction::triggered, this, [this] { applyLayout(LayoutKind::Grid); });
+	connect(pictureInPicture, &QAction::triggered, this, [this] { applyLayout(LayoutKind::PictureInPicture); });
+	connect(includeCamera, &QAction::toggled, controller_, &SessionController::setLayoutIncludesCamera);
 	connect(inviteButton_, &QPushButton::clicked, this, &QuickCastDock::inviteGuest);
 	connect(openLinkButton_, &QToolButton::clicked, this, &QuickCastDock::copyOpenLink);
 	connect(settingsButton_, &QToolButton::clicked, this, &QuickCastDock::openSettings);
@@ -167,6 +204,7 @@ QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : Q
 		refreshGuests();
 	});
 	connect(controller_, &SessionController::guestListChanged, this, &QuickCastDock::rebuildGuests);
+	connect(controller_, &SessionController::collaboratorsChanged, this, &QuickCastDock::rebuildCollaborators);
 	connect(controller_, &SessionController::guestStatusChanged, this, [this](const QString &) {
 		refreshGuests();
 		refreshState();
@@ -174,6 +212,7 @@ QuickCastDock::QuickCastDock(SessionController *controller, QWidget *parent) : Q
 
 	refreshTimer_->start();
 	restyle();
+	rebuildCollaborators();
 	rebuildGuests();
 }
 
@@ -202,13 +241,15 @@ void QuickCastDock::restyle()
 		return font;
 	}());
 
-	ui::styleMuted(listHeading_, 0.88);
-	listHeading_->setStyleSheet(listHeading_->styleSheet() + QStringLiteral(" font-weight: 700;"));
-	QFont headingFont = listHeading_->font();
-	headingFont.setBold(true);
-	headingFont.setCapitalization(QFont::AllUppercase);
-	headingFont.setLetterSpacing(QFont::PercentageSpacing, 108);
-	listHeading_->setFont(headingFont);
+	for (QLabel *heading : {listHeading_, collaboratorHeading_}) {
+		ui::styleMuted(heading, 0.88);
+		heading->setStyleSheet(heading->styleSheet() + QStringLiteral(" font-weight: 700;"));
+		QFont headingFont = heading->font();
+		headingFont.setBold(true);
+		headingFont.setCapitalization(QFont::AllUppercase);
+		headingFont.setLetterSpacing(QFont::PercentageSpacing, 108);
+		heading->setFont(headingFont);
+	}
 
 	emptyState_->setAttribute(Qt::WA_StyledBackground, true);
 	emptyState_->setStyleSheet(QStringLiteral("#quickCastEmptyState { border: 1px dashed %1; border-radius: 8px; }")
@@ -223,8 +264,13 @@ void QuickCastDock::restyle()
 
 	ui::styleIconButton(openLinkButton_, ui::Icon::Link, tr_("Dock.CopyOpenLink.Tooltip"));
 	ui::styleIconButton(settingsButton_, ui::Icon::Gear, tr_("Dock.Settings"));
+	ui::styleIconButton(layoutButton_, ui::Icon::Layout, tr_("Layout.Tooltip"));
+	ui::styleButton(joinButton_, ui::ButtonKind::Secondary);
+	joinButton_->setIcon(ui::icon(ui::Icon::Enter, c.text));
 
 	for (auto &[id, row] : rows_)
+		row->restyle();
+	for (CollaboratorRow *row : collaboratorRows_)
 		row->restyle();
 	restyling_ = false;
 }
@@ -239,6 +285,10 @@ void QuickCastDock::refreshState()
 		return guest.status.connection == GuestConnection::Connected;
 	});
 	const bool running = controller_->showRunning();
+	// Whose show this is changes the wording, not the shape: the same card, list and button, seen from the
+	// guest's chair.
+	const bool joined = controller_->joined();
+	const QString showName = controller_->joinedShowName();
 
 	QString pill;
 	QColor pillColor = c.text;
@@ -251,14 +301,17 @@ void QuickCastDock::refreshState()
 		subline = guests.empty() ? tr_("State.Off.HintNoGuests") : tr_("State.Off.Hint");
 		break;
 	case ServiceState::Connecting:
-		pill = tr_("State.Pill.Starting");
+		pill = joined ? tr_("State.Pill.Joining") : tr_("State.Pill.Starting");
 		pillColor = c.warning;
-		headline = tr_("State.Connecting");
+		headline = joined ? tr_("State.Joining").arg(showName) : tr_("State.Connecting");
 		break;
 	case ServiceState::Live:
-		pill = tr_("State.Pill.Live");
+		pill = joined ? tr_("State.Pill.Joined") : tr_("State.Pill.Live");
 		pillColor = c.danger;
-		if (guests.empty()) {
+		if (joined) {
+			headline = tr_("State.Joined").arg(showName);
+			subline = connected == 0 ? tr_("State.Joined.HintWaiting") : QString();
+		} else if (guests.empty()) {
 			headline = tr_("State.Live");
 			subline = tr_("State.Live.HintNoGuests");
 		} else {
@@ -270,12 +323,12 @@ void QuickCastDock::refreshState()
 		pill = tr_("State.Pill.Reconnecting");
 		pillColor = c.warning;
 		headline = tr_("State.Reconnecting");
-		subline = tr_("State.Reconnecting.Hint");
+		subline = joined ? tr_("State.Reconnecting.HintJoined") : tr_("State.Reconnecting.Hint");
 		break;
 	case ServiceState::Failed:
 		pill = tr_("State.Pill.Error");
 		pillColor = c.danger;
-		headline = tr_("State.Failed");
+		headline = controller_->lastShowWasJoined() ? tr_("State.Join.Failed") : tr_("State.Failed");
 		break;
 	}
 	const QString detail = controller_->stateDetail();
@@ -283,7 +336,10 @@ void QuickCastDock::refreshState()
 		subline = detail;
 
 	statePill_->setText(pill);
-	if (state == ServiceState::Live)
+	// Red is for our own show being open to guests. Sitting in someone else's is a calmer state.
+	if (state == ServiceState::Live && joined)
+		ui::stylePill(statePill_, c.good, QColor(Qt::white));
+	else if (state == ServiceState::Live)
 		ui::stylePill(statePill_, c.danger, QColor(Qt::white));
 	else
 		ui::stylePill(statePill_, ui::tint(pillColor, 0.22),
@@ -305,9 +361,14 @@ void QuickCastDock::refreshState()
 
 	// One emphasised button at a time, always the next sensible step: invite when there is nobody to host, start
 	// the show once there is. While live the emphasis moves into the list, to the guest waiting to go on screen.
-	const bool inviteIsNext = guests.empty();
-	showButton_->setText(running ? tr_("Dock.EndShow") : tr_("Dock.StartShow"));
-	showButton_->setToolTip(running ? tr_("Dock.EndShow.Tooltip") : tr_("Dock.StartShow.Tooltip"));
+	const bool inviteIsNext = guests.empty() && !joined;
+	if (joined) {
+		showButton_->setText(tr_("Dock.LeaveShow"));
+		showButton_->setToolTip(tr_("Dock.LeaveShow.Tooltip"));
+	} else {
+		showButton_->setText(running ? tr_("Dock.EndShow") : tr_("Dock.StartShow"));
+		showButton_->setToolTip(running ? tr_("Dock.EndShow.Tooltip") : tr_("Dock.StartShow.Tooltip"));
+	}
 	const bool startIsNext = !running && !inviteIsNext;
 	ui::ButtonKind showKind = ui::ButtonKind::Secondary;
 	if (running)
@@ -320,7 +381,28 @@ void QuickCastDock::refreshState()
 	ui::styleButton(inviteButton_, inviteIsNext ? ui::ButtonKind::Primary : ui::ButtonKind::Secondary);
 	inviteButton_->setIcon(ui::icon(ui::Icon::Plus, inviteIsNext ? c.accentText : c.text));
 
-	listHeading_->setText(guests.empty() ? tr_("Dock.Guests") : tr_("Dock.GuestsCount").arg(guests.size()));
+	if (joined)
+		listHeading_->setText(tr_("Dock.InThisShow"));
+	else
+		listHeading_->setText(guests.empty() ? tr_("Dock.Guests") : tr_("Dock.GuestsCount").arg(guests.size()));
+
+	// Joining is the alternative to starting, so it is offered exactly when starting is. Inviting only makes sense
+	// for a show of our own.
+	joinButton_->setVisible(!running);
+	inviteButton_->setVisible(!joined);
+	openLinkButton_->setVisible(!joined);
+	footerLayout_->setStretch(1, joined ? 1 : 0);
+	layoutButton_->setVisible(!guests.empty());
+	const bool showCollaborators = !running && !collaboratorRows_.empty();
+	collaboratorHeading_->setVisible(showCollaborators);
+	for (CollaboratorRow *row : collaboratorRows_)
+		row->setVisible(showCollaborators);
+	// The "how to invite" steps would push remembered shows out of sight in a short dock; the status card above
+	// already says how to get started.
+	emptyState_->setVisible(guests.empty() && !showCollaborators);
+	listHeading_->setVisible(!guests.empty() || !showCollaborators);
+	emptyTitle_->setText(joined ? tr_("Dock.Empty.Joined.Title") : tr_("Dock.Empty.Title"));
+	emptyText_->setText(joined ? tr_("Dock.Empty.Joined.Text") : tr_("Dock.Empty.Steps"));
 	restyling_ = false;
 }
 
@@ -344,6 +426,37 @@ void QuickCastDock::rebuildGuests()
 	restyling_ = false;
 	emptyState_->setVisible(guests.empty());
 	refreshState();
+}
+
+void QuickCastDock::rebuildCollaborators()
+{
+	for (CollaboratorRow *row : collaboratorRows_) {
+		guestLayout_->removeWidget(row);
+		row->deleteLater();
+	}
+	collaboratorRows_.clear();
+
+	restyling_ = true;
+	int index = guestLayout_->indexOf(collaboratorHeading_) + 1;
+	for (const Collaborator &collaborator : controller_->collaborators()) {
+		auto *row = new CollaboratorRow(controller_, collaborator, guestContainer_);
+		guestLayout_->insertWidget(index++, row);
+		collaboratorRows_.push_back(row);
+	}
+	restyling_ = false;
+	refreshState();
+}
+
+void QuickCastDock::joinShow()
+{
+	JoinDialog dialog(controller_, window());
+	dialog.exec();
+}
+
+void QuickCastDock::applyLayout(LayoutKind kind)
+{
+	if (controller_->applyLayout(kind) == 0)
+		showNotice(tr_("Notice.NothingToArrange"));
 }
 
 void QuickCastDock::refreshGuests()

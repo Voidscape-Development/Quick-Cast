@@ -21,6 +21,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 
+#include <algorithm>
 #include <cstring>
 
 #include <vector>
@@ -143,6 +144,111 @@ bool addToCurrentScene(obs_source_t *source, bool fitToCanvas)
 		}
 	}
 	return true;
+}
+
+size_t arrangeInCurrentScene(const std::vector<obs_source_t *> &sources, LayoutKind kind)
+{
+	OBSSourceAutoRelease sceneSource = currentSceneSource();
+	obs_scene_t *scene = obs_scene_from_source(sceneSource);
+	obs_video_info video = {};
+	if (!scene || !obs_get_video_info(&video))
+		return 0;
+
+	std::vector<obs_sceneitem_t *> items;
+	for (obs_source_t *source : sources) {
+		ItemSearch search{source, {}};
+		obs_scene_enum_items(scene, collectItems, &search);
+		// A locked item is the user saying "leave this where it is".
+		if (!search.items.empty() && !obs_sceneitem_locked(search.items.front()))
+			items.push_back(search.items.front());
+	}
+
+	const std::vector<TileRect> tiles = computeLayout(kind, items.size(), static_cast<float>(video.base_width),
+							  static_cast<float>(video.base_height));
+	for (size_t i = 0; i < items.size() && i < tiles.size(); ++i) {
+		obs_sceneitem_t *item = items[i];
+		const TileRect &tile = tiles[i];
+		vec2 position;
+		vec2_set(&position, tile.x, tile.y);
+		vec2 bounds;
+		vec2_set(&bounds, tile.width, tile.height);
+
+		// A bounding box rather than a scale, so the tile holds whatever resolution the guest ends up sending.
+		// Crop and filters are the user's and stay as they are.
+		obs_sceneitem_defer_update_begin(item);
+		obs_sceneitem_set_rot(item, 0.0f);
+		obs_sceneitem_set_alignment(item, OBS_ALIGN_LEFT | OBS_ALIGN_TOP);
+		obs_sceneitem_set_pos(item, &position);
+		obs_sceneitem_set_bounds_type(item, OBS_BOUNDS_SCALE_INNER);
+		obs_sceneitem_set_bounds_alignment(item, OBS_ALIGN_CENTER);
+		obs_sceneitem_set_bounds(item, &bounds);
+		obs_sceneitem_defer_update_end(item);
+		// Small tiles are only useful on top of whatever fills the rest of the scene.
+		if (kind == LayoutKind::PictureInPicture)
+			obs_sceneitem_set_order(item, OBS_ORDER_MOVE_TOP);
+	}
+	return std::min(items.size(), tiles.size());
+}
+
+namespace {
+
+struct DeviceSearch {
+	const char *const *ids;
+	std::string firstName;
+	std::string inSceneName;
+};
+
+/** First source of one of the given types, preferring one that is in the scene being edited. */
+std::string findDeviceSource(const char *const *ids)
+{
+	DeviceSearch search{ids, {}, {}};
+	obs_enum_sources(
+		[](void *param, obs_source_t *source) {
+			auto *ctx = static_cast<DeviceSearch *>(param);
+			const char *id = obs_source_get_unversioned_id(source);
+			const char *name = obs_source_get_name(source);
+			if (!id || !name || !*name)
+				return true;
+			for (const char *const *candidate = ctx->ids; *candidate; ++candidate) {
+				if (strcmp(id, *candidate) != 0)
+					continue;
+				if (ctx->firstName.empty())
+					ctx->firstName = name;
+				if (ctx->inSceneName.empty() && isInCurrentScene(source))
+					ctx->inSceneName = name;
+				break;
+			}
+			return ctx->inSceneName.empty();
+		},
+		&search);
+	return search.inSceneName.empty() ? search.firstName : search.inSceneName;
+}
+
+} // namespace
+
+std::string detectCameraSourceName()
+{
+	static const char *const ids[] = {"dshow_input",
+					  "av_capture_input",
+					  "macos-avcapture",
+					  "macos-avcapture-fast",
+					  "v4l2_input",
+					  "pipewire-camera-source",
+					  nullptr};
+	return findDeviceSource(ids);
+}
+
+std::string detectMicrophoneSourceName()
+{
+	// OBS keeps the first "Mic/Aux" device chosen under Settings -> Audio on output channel 3.
+	if (OBSSourceAutoRelease global = obs_get_output_source(3)) {
+		const char *name = obs_source_get_name(global);
+		if (name && *name)
+			return name;
+	}
+	static const char *const ids[] = {"wasapi_input_capture", "coreaudio_input_capture", "pulse_input_capture",
+					  "alsa_input_capture", nullptr};
+	return findDeviceSource(ids);
 }
 
 bool removeFromCurrentScene(obs_source_t *source)

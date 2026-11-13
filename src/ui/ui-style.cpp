@@ -164,6 +164,19 @@ void paintIcon(QPainter &p, Icon which, const QColor &color)
 		p.setBrush(color);
 		p.drawRoundedRect(QRectF(4, 4, 8, 8), 1.5, 1.5);
 		break;
+	case Icon::Layout:
+		// A frame split into one wide tile and two small ones.
+		p.drawRoundedRect(QRectF(2.5, 3.5, 11, 9), 1.5, 1.5);
+		p.drawLine(QPointF(8.5, 3.5), QPointF(8.5, 12.5));
+		p.drawLine(QPointF(8.5, 8), QPointF(13.5, 8));
+		break;
+	case Icon::Enter:
+		// An arrow going in through a doorway.
+		p.drawPolyline(
+			QPolygonF({QPointF(9.5, 2.5), QPointF(13.5, 2.5), QPointF(13.5, 13.5), QPointF(9.5, 13.5)}));
+		p.drawLine(QPointF(2.5, 8), QPointF(9.5, 8));
+		p.drawPolyline(QPolygonF({QPointF(6.5, 5), QPointF(9.5, 8), QPointF(6.5, 11)}));
+		break;
 	}
 }
 
