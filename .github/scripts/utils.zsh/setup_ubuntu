@@ -38,6 +38,42 @@ if (( ! (${skips[(Ie)all]} + ${skips[(Ie)deps]}) )) {
   sudo add-apt-repository --yes ppa:obsproject/obs-studio
   sudo apt update
 
+  # The distribution's own obs-studio package ships no development files, so the build needs the PPA's. On systems
+  # where apt uses an architecture variant (Ubuntu 26.04 runners use amd64v3) apt only reads the PPA's variant
+  # index, which is empty, and silently falls back to the distribution package. Fetch the PPA build directly then.
+  local obs_package=obs-studio
+  if ! apt-cache madison obs-studio | grep -q 'launchpadcontent.net/obsproject/obs-studio'; then
+    local ppa_url='https://ppa.launchpadcontent.net/obsproject/obs-studio/ubuntu'
+    local deb_arch=${${${target##*-}/x86_64/amd64}/aarch64/arm64}
+    local codename=$(. /etc/os-release && print -r -- ${VERSION_CODENAME})
+    local deb_file deb_hash
+    read -r deb_file deb_hash <<< "$(curl -fsSL ${ppa_url}/dists/${codename}/main/binary-${deb_arch}/Packages.gz \
+      | gunzip \
+      | awk -v RS= '/(^|\n)Package: obs-studio\n/ {
+          n = split($0, lines, "\n")
+          for (i = 1; i <= n; i++) {
+            if (lines[i] ~ /^Filename: /) file = substr(lines[i], 11)
+            if (lines[i] ~ /^SHA256: /) hash = substr(lines[i], 9)
+          }
+          print file, hash
+          exit
+        }')"
+
+    if [[ -z ${deb_file} || -z ${deb_hash} ]] {
+      log_error "No obs-studio package for ${codename}/${deb_arch} in the OBS PPA."
+      return 2
+    }
+
+    log_info "apt does not see the OBS PPA build, downloading ${deb_file:t}"
+    mkdir -p ${project_root}/.deps
+    curl -fsSL -o ${project_root}/.deps/obs-studio.deb ${ppa_url}/${deb_file}
+    print -r -- "${deb_hash}  ${project_root}/.deps/obs-studio.deb" | sha256sum --check --status || {
+      log_error "Checksum of downloaded ${deb_file:t} does not match the PPA index."
+      return 2
+    }
+    obs_package=${project_root}/.deps/obs-studio.deb
+  fi
+
   sudo apt-get install ${apt_args} \
     build-essential \
     libgles2-mesa-dev \
@@ -47,7 +83,7 @@ if (( ! (${skips[(Ie)all]} + ${skips[(Ie)deps]}) )) {
     libssl-dev \
     libgtest-dev \
     nlohmann-json3-dev \
-    obs-studio
+    ${obs_package}
 
   local -a _qt_packages=()
 
