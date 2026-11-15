@@ -79,7 +79,7 @@ std::optional<Json> resolvePayload(const Json &message, const char *key, const s
 
 	const std::string vector = firstString(message, {"vector"});
 	if (!it->is_string() || vector.empty())
-		return *it;
+		return std::optional<Json>(std::in_place, *it);
 
 	const std::string ciphertext = it->get<std::string>();
 	for (const Credentials *credentials : keys) {

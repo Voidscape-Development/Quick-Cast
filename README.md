@@ -132,11 +132,11 @@ Quick Cast uses the standard [OBS plugin template](https://github.com/obsproject
 so the template's [build instructions](https://github.com/obsproject/obs-plugintemplate/wiki) apply.
 
 ```sh
-# Windows (Visual Studio 2022)
+# Windows (Visual Studio 2026)
 cmake --preset windows-x64
 cmake --build --preset windows-x64
 
-# Ubuntu 24.04
+# Ubuntu 26.04
 sudo apt install libavcodec-dev libavutil-dev libssl-dev
 cmake --preset ubuntu-x86_64
 cmake --build --preset ubuntu-x86_64
