@@ -1,0 +1,18 @@
+{
+    "display_name": "Quick Cast",
+    "id": "0636b064-7629-4ead-88b5-222410a2ee97",
+    "version": "0.1.0",
+    "authors": [
+        "Voidscape Development"
+    ],
+    "name": "quick-cast",
+    "description": "Quick Cast is an OBS Studio plugin for bringing remote guests into a broadcast.",
+    "long_description": "Quick Cast is an OBS Studio plugin for bringing remote guests into a broadcast. You invite someone with a link, they open it in a browser, and they show up in a dock inside OBS where one click puts them on screen.",
+    "urls": {
+        "repository": "https://github.com/Voidscape-Development/Quick-Cast",
+        "website": "https://github.com/Voidscape-Development/Quick-Cast",
+        "support": "https://github.com/Voidscape-Development/Quick-Cast/issues"
+    },
+    "has_banner": false,
+    "has_icon": false
+}
