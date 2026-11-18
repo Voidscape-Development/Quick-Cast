@@ -6,6 +6,7 @@ project(${_name} VERSION ${_version})
 
 option(ENABLE_FRONTEND_API "Use obs-frontend-api for UI functionality" ON)
 option(ENABLE_QT "Use Qt functionality" ON)
+option(ENABLE_BUILD_LEGACY "Enable legacy build" OFF)
 option(ENABLE_TESTS "Build unit tests and developer tools for the OBS-independent core" OFF)
 option(QUICK_CAST_BUILD_PLUGIN "Build the OBS plugin module (disable to build only the core library)" ON)
 
